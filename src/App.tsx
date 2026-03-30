@@ -133,7 +133,7 @@ export default function App() {
   return (
     <div className="screen">
       <h1 className="title" style={{ fontSize: '1.8rem' }}>IMPOSTOR<br/>PARA LA BANDA 🇦🇷</h1>
-      <p style={{ textAlign: 'center', fontSize: '0.6rem', color: '#aaa', marginTop: '-15px', marginBottom: '10px' }}>v1.1 - Modo Local Corregido</p>
+      <p style={{ textAlign: 'center', fontSize: '0.6rem', color: '#aaa', marginTop: '-15px', marginBottom: '10px' }}>v1.2 - Arreglado!</p>
       
       <AnimatePresence mode="wait">
         {screen === 'START' && (
@@ -143,7 +143,7 @@ export default function App() {
               <User size={20} /> Modo Local (Un solo celu)
             </button>
             <div className="card" style={{ background: '#f0f4f8', padding: '15px', marginTop: '15px' }}>
-              <h4 style={{ margin: '0 0 10px 0' }}>Modo Online</h4>
+              <h4>Modo Online</h4>
               <button className="btn btn-accent" onClick={createRoom} style={{ marginBottom: '10px' }}>Crear Sala</button>
               <div style={{ display: 'flex', gap: '5px' }}>
                 <input className="input" placeholder="Código" maxLength={4} style={{ marginBottom: 0, textTransform: 'uppercase' }} onChange={(e) => setRoomCode(e.target.value)} />
@@ -195,9 +195,8 @@ export default function App() {
                 </div>
                 <button className="btn btn-accent" onClick={mode === 'LOCAL' ? startLocalGame : startOnlineGame} disabled={players.length < 3}>¡EMPEZAR!</button>
               </>
-            ) : (
-              <p style={{ textAlign: 'center', color: '#666' }}>Esperando al anfitrión...</p>
             )}
+            {!isHost && <p style={{ textAlign: 'center', color: '#666' }}>Esperando al anfitrión...</p>}
           </div>
         )}
 
