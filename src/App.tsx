@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Users, Play, UserPlus, Info, Trophy, Ghost, User, Settings, Check, X, LogIn, ArrowLeft, Clock, Send, MessageSquare, CheckCircle2 } from 'lucide-react';
+import { Users, Play, UserPlus, Info, Trophy, Ghost, User, Settings, Check, X, LogIn, ArrowLeft, Clock, Send, MessageSquare, CheckCircle2, ChevronRight } from 'lucide-react';
 import { CATEGORIES, Category, GameItem } from './data/categories';
 import { supabase } from './supabase';
 
@@ -69,16 +69,20 @@ export default function App() {
     return () => { supabase.removeChannel(channel); };
   }, [mode, roomCode]);
 
+  // Lógica de auto-avance (Mejorada para evitar que se trabe)
   useEffect(() => {
-    if (isHost && mode === 'ONLINE' && screen === 'REVEAL' && players.length > 0 && readyPlayers.length === players.length) {
-      setTimeout(() => {
-        supabase.from('rooms').update({ 
-          game_state: settings.writtenClues ? 'WRITING' : 'VOTING',
-          ready_players: [] 
-        }).eq('code', roomCode);
-      }, 500);
+    if (isHost && mode === 'ONLINE' && screen === 'REVEAL' && players.length > 0) {
+      if (readyPlayers.length >= players.length) {
+        const advance = async () => {
+          await supabase.from('rooms').update({ 
+            game_state: settings.writtenClues ? 'WRITING' : 'VOTING',
+            ready_players: [] 
+          }).eq('code', roomCode);
+        };
+        advance();
+      }
     }
-  }, [readyPlayers.length, players.length, isHost, screen]);
+  }, [readyPlayers.length, players.length, isHost, screen, settings.writtenClues]);
 
   const generateCode = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -112,7 +116,14 @@ export default function App() {
   const startOnlineGame = async () => {
     if (players.length < 3) return alert('Mínimo 3 jugadores');
     const word = selectedCategory.items[Math.floor(Math.random() * selectedCategory.items.length)];
-    const shuffled = [...players].sort(() => Math.random() - 0.5);
+    
+    // FIX ALEATORIEDAD: Fisher-Yates Shuffle para asegurar que no siempre sea el admin
+    const shuffled = [...players];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    
     const imps = shuffled.slice(0, impostorCount).map(p => p.id);
     const starter = players[Math.floor(Math.random() * players.length)].name;
     const direction = Math.random() > 0.5 ? 'Horario' : 'Anti-horario';
@@ -124,14 +135,20 @@ export default function App() {
 
   const setPlayerReady = async () => {
     if (readyPlayers.includes(playerId)) return;
-    const newReady = [...readyPlayers, playerId];
-    await supabase.from('rooms').update({ ready_players: newReady }).eq('code', roomCode);
+    // Leemos de la base para evitar pisar a otros
+    const { data } = await supabase.from('rooms').select('ready_players').eq('code', roomCode).single();
+    const latestReady = data?.ready_players || [];
+    if (!latestReady.includes(playerId)) {
+      await supabase.from('rooms').update({ ready_players: [...latestReady, playerId] }).eq('code', roomCode);
+    }
   };
 
   const submitClue = async (clue: string) => {
-    const newClues = { ...playerClues, [playerId]: clue };
+    const { data } = await supabase.from('rooms').select('player_clues').eq('code', roomCode).single();
+    const currentClues = data?.player_clues || {};
+    const newClues = { ...currentClues, [playerId]: clue };
     await supabase.from('rooms').update({ player_clues: newClues }).eq('code', roomCode);
-    if (Object.keys(newClues).length === players.length) {
+    if (Object.keys(newClues).length >= players.length) {
       await supabase.from('rooms').update({ game_state: 'DEBATE' }).eq('code', roomCode);
     }
   };
@@ -146,7 +163,7 @@ export default function App() {
   return (
     <div className="screen">
       <h1 className="title" style={{ fontSize: '1.8rem' }}>IMPOSTOR PARA LA BANDA 🇦🇷</h1>
-      <p style={{ textAlign: 'center', fontSize: '0.6rem', color: '#aaa', marginTop: '-15px', marginBottom: '10px' }}>v1.3.4 - Todo de vuelta!</p>
+      <p style={{ textAlign: 'center', fontSize: '0.6rem', color: '#aaa', marginTop: '-15px', marginBottom: '10px' }}>v1.3.5 - Random & Sincro FIX</p>
       
       <AnimatePresence mode="wait">
         {screen === 'START' && (
@@ -208,8 +225,7 @@ export default function App() {
             gameWord={gameWord} impostorIds={impostorIds} settings={settings} 
             roomCode={roomCode} isHost={isHost} turnInfo={turnInfo}
             playerClues={playerClues} submitClue={submitClue}
-            chatMessages={chatMessages} sendChatMessage={sendChatMessage}
-            readyPlayers={readyPlayers} setPlayerReady={setPlayerReady}
+            chatMessages={chatMessages} readyPlayers={readyPlayers} setPlayerReady={setPlayerReady}
           />
         )}
       </AnimatePresence>
@@ -250,9 +266,16 @@ function GamePhase({ screen, setScreen, mode, players, playerId, revealedIdx, se
           )}
         </div>
         {show && (
-          <button className={`btn ${isReady ? 'btn-secondary' : 'btn-primary'}`} style={{ marginTop: '20px' }} onClick={setPlayerReady} disabled={isReady}>
-            {isReady ? `ESPERANDO (${readyPlayers.length}/${players.length})` : 'LISTO'}
-          </button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '20px' }}>
+            <button className={`btn ${isReady ? 'btn-secondary' : 'btn-primary'}`} onClick={setPlayerReady} disabled={isReady}>
+              {isReady ? `ESPERANDO (${readyPlayers.length}/${players.length})` : 'LISTO'}
+            </button>
+            {isHost && (
+              <button className="btn btn-secondary" style={{ fontSize: '0.7rem' }} onClick={async () => await supabase.from('rooms').update({ game_state: settings.writtenClues ? 'WRITING' : 'VOTING', ready_players: [] }).eq('code', roomCode)}>
+                FORZAR INICIO (Host) <ChevronRight size={14}/>
+              </button>
+            )}
+          </div>
         )}
       </div>
     );
@@ -267,6 +290,11 @@ function GamePhase({ screen, setScreen, mode, players, playerId, revealedIdx, se
         <button className="btn btn-accent" onClick={() => submitClue(writtenClue)} disabled={alreadySubmitted || !writtenClue}>
           {alreadySubmitted ? `ESPERANDO (${Object.keys(playerClues).length}/${players.length})` : 'ENVIAR'}
         </button>
+        {isHost && alreadySubmitted && (
+          <button className="btn btn-secondary" style={{ marginTop: '10px', fontSize: '0.7rem' }} onClick={async () => await supabase.from('rooms').update({ game_state: 'DEBATE' }).eq('code', roomCode)}>
+            FORZAR DEBATE (Host)
+          </button>
+        )}
       </div>
     );
   }
