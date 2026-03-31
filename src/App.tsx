@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Users, Play, UserPlus, Info, Trophy, Ghost, User, Settings, Check, X, LogIn, ArrowLeft, Clock, Send, CheckCircle2, FastForward, ChevronRight, MessageSquare, PenTool, Skull, Eye } from 'lucide-react';
+import { Users, Play, UserPlus, Info, Trophy, Ghost, User, Settings, Check, X, LogIn, ArrowLeft, Clock, Send, CheckCircle2, FastForward, ChevronRight, MessageSquare, PenTool, Skull, Eye, Plus, Minus } from 'lucide-react';
 import { CATEGORIES, Category, GameItem } from './data/categories';
 import { supabase } from './supabase';
 
@@ -26,6 +26,7 @@ export default function App() {
   const [revealedIdx, setRevealedIdx] = useState(0);
   const [turnInfo, setTurnInfo] = useState<any>({ chat: [], customWords: [], votes: {}, eliminated: [], round: 1, winner: null, turn_order: [], current_turn_idx: 0 });
 
+  // --- SINCRONIZACIÓN ---
   useEffect(() => {
     if (mode !== 'ONLINE' || !roomCode) return;
     const roomSub = supabase.channel(`room-${roomCode}`).on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `code=eq.${roomCode}` }, (payload) => {
@@ -59,7 +60,7 @@ export default function App() {
     const selected = available[Math.floor(Math.random() * available.length)];
     used.push(selected.name || selected);
     localStorage.setItem(usedKey, JSON.stringify(used));
-    return typeof selected === 'string' ? { name: selected, sub: 'Amigo', clue: 'Alguien de la banda' } : selected;
+    return typeof selected === 'string' ? { name: selected, sub: 'Amigo', clue: 'Alguien conocido' } : selected;
   };
 
   const createRoom = async () => {
@@ -75,9 +76,10 @@ export default function App() {
   const joinRoom = async (code: string) => {
     if (!currentPlayerName.trim()) return alert('Poné tu nombre');
     const myId = Math.random().toString(36).substr(2, 9);
-    const { error } = await supabase.from('players').insert([{ id: myId, room_code: code.toUpperCase(), name: currentPlayerName }]);
+    const cleanCode = code.toUpperCase();
+    const { error } = await supabase.from('players').insert([{ id: myId, room_code: cleanCode, name: currentPlayerName }]);
     if (error) return alert('No existe la sala');
-    setRoomCode(code.toUpperCase()); setPlayerId(myId); setIsHost(false); setMode('ONLINE'); setScreen('LOBBY');
+    setRoomCode(cleanCode); setPlayerId(myId); setIsHost(false); setMode('ONLINE'); setScreen('LOBBY');
   };
 
   const startGame = async () => {
@@ -91,12 +93,12 @@ export default function App() {
 
     if (mode === 'LOCAL') {
       if (selectedCategory.isCustom) { setScreen('INPUT_CUSTOM'); setRevealedIdx(0); return; }
-      setGameWord(word); setPlayers(players.map(p => ({ ...p, is_impostor: imps.includes(p.id), clue: '' })));
-      setTurnInfo({ starter, direction, eliminated: [], round: 1, winner: null, customWords: [], turn_order: turnOrder });
+      setGameWord(word); setPlayers(players.map(p => ({ ...p, is_impostor: imps.includes(p.id), clue: '', custom_names: [] })));
+      setTurnInfo({ starter, direction, chat: [], votes: {}, eliminated: [], round: 1, winner: null, customWords: [], turn_order: turnOrder });
       setRevealedIdx(0); setScreen('REVEAL');
     } else {
       if (selectedCategory.isCustom) { await supabase.from('rooms').update({ game_state: 'INPUT_CUSTOM', turn_info: { eliminated: [], round: 1, chat: [], votes: {}, winner: null, turn_order: turnOrder, current_turn_idx: 0, customWords: [] } }).eq('code', roomCode); return; }
-      for (const p of players) await supabase.from('players').update({ is_ready: false, is_impostor: imps.includes(p.id), clue: '' }).eq('id', p.id);
+      for (const p of players) await supabase.from('players').update({ is_ready: false, is_impostor: imps.includes(p.id), clue: '', custom_names: [] }).eq('id', p.id);
       await supabase.from('rooms').update({ game_state: 'REVEAL', game_word: word, turn_info: { starter, direction, chat: [], votes: {}, eliminated: [], round: 1, winner: null, customWords: [], turn_order: turnOrder, current_turn_idx: 0 }, settings }).eq('code', roomCode);
     }
   };
@@ -104,7 +106,7 @@ export default function App() {
   return (
     <div className="screen">
       <h1 className="title" style={{ fontSize: '1.8rem' }}>IMPOSTOR PARA LA BANDA 🇦🇷</h1>
-      <p style={{ textAlign: 'center', fontSize: '0.6rem', color: '#aaa', marginTop: '-15px', marginBottom: '10px' }}>v1.9.1 - Mix Local/Online</p>
+      <p style={{ textAlign: 'center', fontSize: '0.6rem', color: '#aaa', marginTop: '-15px', marginBottom: '10px' }}>v1.9.2 - Final Fixes</p>
       
       <AnimatePresence mode="wait">
         {screen === 'START' && (
@@ -128,7 +130,7 @@ export default function App() {
             {mode === 'LOCAL' && (
               <div style={{ margin: '15px 0' }}>
                 <div style={{ display: 'flex', gap: '5px' }}>
-                  <input className="input" value={currentPlayerName} onChange={(e) => setCurrentPlayerName(e.target.value)} placeholder="Nombre del amigo" />
+                  <input className="input" value={currentPlayerName} onChange={(e) => setCurrentPlayerName(e.target.value)} placeholder="Nombre del amigo" onKeyDown={(e) => e.key === 'Enter' && setPlayers([...players, {id: Math.random().toString(), name: currentPlayerName}])} />
                   <button className="btn btn-primary" onClick={() => { if (!currentPlayerName.trim()) return; setPlayers([...players, {id: Math.random().toString(), name: currentPlayerName}]); setCurrentPlayerName(''); }} style={{ width: 'auto' }}><UserPlus size={18}/></button>
                 </div>
               </div>
@@ -148,7 +150,7 @@ export default function App() {
                   <h4 style={{ margin: '0 0 10px 0' }}><Settings size={16} /> Reglas</h4>
                   <ToggleButton label="Cronómetro" value={settings.useTimer} onClick={() => setSettings({...settings, useTimer: !settings.useTimer})} />
                   <ToggleButton label="Pista Gemini" value={settings.giveImpostorClue} onClick={() => setSettings({...settings, giveImpostorClue: !settings.giveImpostorClue})} />
-                  <ToggleButton label="Impostores se conocen" value={settings.impostorsKnowEachOther} onClick={() => setSettings({...settings, impostorsKnowEachOther: !settings.impostorsKnowEachOther})} />
+                  <ToggleButton label="Los impostores se conocen" value={settings.impostorsKnowEachOther} onClick={() => setSettings({...settings, impostorsKnowEachOther: !settings.impostorsKnowEachOther})} />
                 </div>
                 <button className="btn btn-accent" onClick={startGame} disabled={players.length < 3}>¡EMPEZAR!</button>
               </>
@@ -186,33 +188,32 @@ function GamePhase({ screen, setScreen, mode, players, setPlayers, playerId, rev
   const currentTurnPlayerName = players.find(p => p.id === currentTurnPlayerId)?.name;
 
   const activePlayers = players.filter((p:any) => !(turnInfo?.eliminated || []).includes(p.id));
-  const me = mode === 'LOCAL' ? activePlayers[revealedIdx] : players.find((p: any) => p.id === playerId) || players[0];
+  const me = mode === 'LOCAL' ? activePlayers[revealedIdx] : (players.find((p: any) => p.id === playerId) || players[0]);
   const isEliminated = (turnInfo?.eliminated || []).includes(playerId);
 
+  useEffect(() => { if (screen === 'REVEAL' && showSecret && settings.useTimer && mode === 'ONLINE') { /* Timer only online writing */ } }, [showSecret, screen]);
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [turnInfo?.chat]);
 
   const handleNextStage = async (next: Screen) => { if (mode === 'LOCAL') setScreen(next); else await supabase.from('rooms').update({ game_state: next }).eq('code', roomCode); };
-
-  const submitOnlineClue = async () => {
-    if (!clueInput.trim()) return alert('Escribí una pista');
-    await supabase.from('players').update({ clue: clueInput }).eq('id', playerId);
-    if (currentIdx < turnOrder.length - 1) await supabase.from('rooms').update({ turn_info: { ...turnInfo, current_turn_idx: currentIdx + 1 } }).eq('code', roomCode);
-    else await supabase.from('rooms').update({ game_state: 'DEBATE' }).eq('code', roomCode);
-    setClueInput(''); setShowSecret(false);
-  };
 
   if (screen === 'INPUT_CUSTOM') {
     const handleCustomSubmit = async () => {
       if (customNames.some(n => !n.trim())) return alert('Completá los 3 nombres');
       if (mode === 'LOCAL') {
-        const allWords = [...(turnInfo.customWords || []), ...customNames];
-        if (revealedIdx < players.length - 1) { setRevealedIdx(revealedIdx + 1); setCustomNames(['','','']); }
-        else {
-          const word = getRandomWord(allWords, 'conocidos');
-          const turnOrder = shuffleArray([...players]).map(p => p.id);
-          const imps = shuffleArray([...players]).slice(0, impostorCount).map(p => p.id);
-          setGameWord(word); setPlayers(players.map(p => ({ ...p, is_impostor: imps.includes(p.id) })));
-          setTurnInfo({...turnInfo, customWords: allWords, turn_order: turnOrder, current_turn_idx: 0, starter: players.find(p=>p.id===turnOrder[0])?.name, direction: Math.random()>0.5?'Derecha':'Izquierda' }); setRevealedIdx(0); setScreen('REVEAL');
+        const updatedPlayers = players.map((p, i) => i === revealedIdx ? {...p, custom_names: customNames} : p);
+        if (revealedIdx < players.length - 1) { 
+          setPlayers(updatedPlayers);
+          setRevealedIdx(revealedIdx + 1); 
+          setCustomNames(['','','']); 
+        } else {
+          const finalWords = updatedPlayers.flatMap(p => p.custom_names || []);
+          const word = getRandomWord(finalWords, 'conocidos');
+          const turnOrder = shuffleArray(updatedPlayers.map(p => p.id));
+          const imps = shuffleArray(updatedPlayers.map(p => p.id)).slice(0, impostorCount);
+          setGameWord(word); 
+          setPlayers(updatedPlayers.map(p => ({ ...p, is_impostor: imps.includes(p.id), clue: '' })));
+          setTurnInfo({...turnInfo, customWords: finalWords, turn_order: turnOrder, current_turn_idx: 0, starter: updatedPlayers.find(p=>p.id===turnOrder[0])?.name, direction: Math.random()>0.5?'Derecha':'Izquierda' }); 
+          setRevealedIdx(0); setScreen('REVEAL');
         }
       } else {
         await supabase.from('players').update({ custom_names: customNames, is_ready: true }).eq('id', playerId);
@@ -225,14 +226,15 @@ function GamePhase({ screen, setScreen, mode, players, setPlayers, playerId, rev
         {customNames.map((n, i) => <input key={i} className="input" value={n} onChange={(e) => { const next = [...customNames]; next[i] = e.target.value; setCustomNames(next); }} placeholder={`Nombre ${i + 1}`} />)}
         <button className="btn btn-primary" onClick={handleCustomSubmit} disabled={mode === 'ONLINE' && me?.is_ready}>{me?.is_ready ? 'ENVIADO ✅' : 'ENVIAR'}</button>
         {isHost && mode === 'ONLINE' && <button className="btn btn-accent" style={{marginTop:'10px'}} onClick={async () => {
-          const { data } = await supabase.from('players').select('custom_names').eq('room_code', roomCode);
+          const { data } = await supabase.from('players').select('id, custom_names').eq('room_code', roomCode);
           const allWords = data?.flatMap(p => p.custom_names || []) || [];
+          if (allWords.length === 0) return alert('Nadie mandó nombres');
           const word = getRandomWord(allWords, 'conocidos');
-          const turnOrder = shuffleArray([...players]).map(p => p.id);
-          const imps = shuffleArray([...players]).slice(0, impostorCount).map(p => p.id);
+          const turnOrder = shuffleArray(players.map(p => p.id));
+          const imps = shuffleArray(players.map(p => p.id)).slice(0, impostorCount);
           for (const p of players) await supabase.from('players').update({ is_ready: false, is_impostor: imps.includes(p.id), clue: '' }).eq('id', p.id);
           await supabase.from('rooms').update({ game_state: 'REVEAL', game_word: word, turn_info: {...turnInfo, turn_order: turnOrder, current_turn_idx: 0, starter: players.find(p=>p.id===turnOrder[0])?.name, direction: Math.random()>0.5?'Derecha':'Izquierda'} }).eq('code', roomCode);
-        }}>EMPEZAR</button>}
+        }}>SORTEAR Y EMPEZAR</button>}
       </div>
     );
   }
@@ -275,7 +277,12 @@ function GamePhase({ screen, setScreen, mode, players, setPlayers, playerId, rev
               )}
             </div>
             <input className="input" value={clueInput} onChange={(e) => setClueInput(e.target.value)} placeholder="Tu pista..." style={{ marginBottom: '10px' }} />
-            <button className="btn btn-primary" onClick={submitOnlineClue} disabled={!clueInput.trim()}>ENVIAR PISTA</button>
+            <button className="btn btn-primary" onClick={async () => {
+              await supabase.from('players').update({ clue: clueInput }).eq('id', playerId);
+              if (currentIdx < turnOrder.length - 1) await supabase.from('rooms').update({ turn_info: { ...turnInfo, current_turn_idx: currentIdx + 1 } }).eq('code', roomCode);
+              else await supabase.from('rooms').update({ game_state: 'DEBATE' }).eq('code', roomCode);
+              setClueInput(''); setShowSecret(false);
+            }} disabled={!clueInput.trim()}>ENVIAR PISTA</button>
           </div>
         ) : <div style={{ textAlign: 'center', padding: '20px', color: '#666' }}><p>Esperando a <strong>{currentTurnPlayerName}</strong>...</p></div>}
       </div>
@@ -302,7 +309,7 @@ function GamePhase({ screen, setScreen, mode, players, setPlayers, playerId, rev
         </div>
         {mode === 'ONLINE' && !isEliminated && (
           <div style={{ display: 'flex', gap: '5px' }}>
-            <input className="input" value={chatInput} onChange={(e) => setChatInput(e.target.value)} style={{marginBottom: 0}} onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()} />
+            <input className="input" value={chatInput} onChange={(e) => setChatInput(e.target.value)} style={{marginBottom: 0}} />
             <button className="btn btn-primary" onClick={async () => { if(!chatInput.trim())return; const newChat = [...(turnInfo?.chat || []), {sender: me.name, text: chatInput}]; await supabase.from('rooms').update({ turn_info: {...turnInfo, chat: newChat} }).eq('code', roomCode); setChatInput(''); }} style={{width:'auto'}}><Send size={18}/></button>
           </div>
         )}
@@ -315,11 +322,24 @@ function GamePhase({ screen, setScreen, mode, players, setPlayers, playerId, rev
     return (
       <div className="card">
         <h3><CheckCircle2 size={20}/> Votación</h3>
+        <p style={{textAlign:'center', fontSize:'0.8rem'}}>{mode === 'LOCAL' ? 'Admin: cargá los votos de la banda.' : 'Votá a quién querés eliminar.'}</p>
         <div className="grid">
-          {activePlayers.map((p: any) => <button key={p.id} className={`btn ${turnInfo?.votes?.[playerId] === p.id ? 'btn-primary' : 'btn-secondary'}`} onClick={async () => {
-            const newVotes = { ...(turnInfo?.votes || {}), [playerId || 'local']: p.id };
-            if (mode === 'LOCAL') setTurnInfo({...turnInfo, votes: newVotes}); else await supabase.from('rooms').update({ turn_info: {...turnInfo, votes: newVotes} }).eq('code', roomCode);
-          }} disabled={isEliminated}>{p.name}</button>)}
+          {activePlayers.map((p: any) => (
+            <div key={p.id} style={{display:'flex', alignItems:'center', gap:'5px', marginBottom:'10px'}}>
+              <button className={`btn ${turnInfo?.votes?.[playerId || 'local'] === p.id ? 'btn-primary' : 'btn-secondary'}`} style={{flex:1, marginBottom:0}} onClick={async () => {
+                const newVotes = { ...(turnInfo?.votes || {}), [playerId || 'local']: p.id };
+                if (mode === 'LOCAL') setTurnInfo({...turnInfo, votes: newVotes}); 
+                else await supabase.from('rooms').update({ turn_info: {...turnInfo, votes: newVotes} }).eq('code', roomCode);
+              }} disabled={isEliminated && mode === 'ONLINE'}>{p.name}</button>
+              {mode === 'LOCAL' && (
+                <div style={{display:'flex', flexDirection:'column', gap:'2px'}}>
+                  <Plus size={16} onClick={() => { const v = turnInfo.votes || {}; v[p.id] = (v[p.id] || 0) + 1; setTurnInfo({...turnInfo, votes: {...v}}); }} />
+                  <Minus size={16} onClick={() => { const v = turnInfo.votes || {}; v[p.id] = Math.max(0, (v[p.id] || 0) - 1); setTurnInfo({...turnInfo, votes: {...v}}); }} />
+                  <span style={{fontSize:'0.7rem', textAlign:'center'}}>{turnInfo?.votes?.[p.id] || 0}</span>
+                </div>
+              )}
+            </div>
+          ))}
         </div>
         {isHost && <button className="btn btn-accent" style={{marginTop:'20px'}} onClick={() => handleNextStage('VOTE_RESULT')}>VER RESULTADO</button>}
       </div>
@@ -328,35 +348,36 @@ function GamePhase({ screen, setScreen, mode, players, setPlayers, playerId, rev
 
   if (screen === 'VOTE_RESULT') {
     const votes = turnInfo?.votes || {};
-    const counts: any = {};
-    Object.values(votes).forEach((id: any) => counts[id] = (counts[id] || 0) + 1);
-    const keys = Object.keys(counts);
-    const votedId = keys.length > 0 ? keys.reduce((a, b) => counts[a] > counts[b] ? a : b) : players[0].id;
+    let votedId = '';
+    if (mode === 'LOCAL') {
+      votedId = Object.keys(votes).reduce((a, b) => (votes[a] > votes[b] ? a : b), activePlayers[0]?.id);
+    } else {
+      const counts: any = {};
+      Object.values(votes).forEach((id: any) => counts[id] = (counts[id] || 0) + 1);
+      votedId = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b, activePlayers[0]?.id);
+    }
     const votedPlayer = players.find(p => p.id === votedId);
 
-    const nextRound = async () => {
-      const newEliminated = [...(turnInfo?.eliminated || []), votedId];
-      const aliveImps = players.filter(p => p.is_impostor && !newEliminated.includes(p.id)).length;
-      const aliveInnos = players.filter(p => !p.is_impostor && !newEliminated.includes(p.id)).length;
-      if (aliveImps === 0 || aliveImps >= aliveInnos) {
-        const winner = aliveImps === 0 ? 'INNOCENTS' : 'IMPOSTORS';
-        if (mode === 'LOCAL') { setTurnInfo({...turnInfo, eliminated: newEliminated, winner}); setScreen('RESULT'); }
-        else await supabase.from('rooms').update({ game_state: 'RESULT', turn_info: {...turnInfo, eliminated: newEliminated, winner} }).eq('code', roomCode);
-      } else {
-        const word = getRandomWord(selectedCategory.items, selectedCategory.id);
-        const newTurnOrder = shuffleArray(players.filter(p => !newEliminated.includes(p.id)).map(p => p.id));
-        if (mode === 'LOCAL') { setPlayers(players.map(p => ({...p, clue: ''}))); setTurnInfo({...turnInfo, eliminated: newEliminated, votes: {}, round: (turnInfo.round || 1) + 1, turn_order: newTurnOrder, current_turn_idx: 0, starter: players.find(p=>p.id===newTurnOrder[0])?.name, direction: Math.random()>0.5?'Derecha':'Izquierda' }); setRevealedIdx(0); setScreen('REVEAL'); }
-        else { 
-          await supabase.from('players').update({ clue: '' }).eq('room_code', roomCode);
-          await supabase.from('rooms').update({ game_state: 'REVEAL', game_word: word, turn_info: {...turnInfo, eliminated: newEliminated, votes: {}, round: (turnInfo.round || 1) + 1, chat: [], turn_order: newTurnOrder, current_turn_idx: 0, starter: players.find(p=>p.id===newTurnOrder[0])?.name, direction: Math.random()>0.5?'Derecha':'Izquierda' } }).eq('code', roomCode);
-        }
-      }
-    };
     return (
       <div className="card" style={{textAlign:'center'}}>
-        <h2>{votedPlayer?.name} eliminado.</h2>
+        <h2>{votedPlayer?.name} fue el más votado.</h2>
         <p style={{fontSize:'2rem'}}>{votedPlayer?.is_impostor ? 'ERA IMPOSTOR 😈' : 'ERA INOCENTE 😇'}</p>
-        {isHost && <button className="btn btn-primary" onClick={nextRound}>CONTINUAR</button>}
+        {isHost && <button className="btn btn-primary" onClick={async () => {
+          const newEliminated = [...(turnInfo?.eliminated || []), votedId];
+          const aliveImps = players.filter(p => p.is_impostor && !newEliminated.includes(p.id)).length;
+          const aliveInnos = players.filter(p => !p.is_impostor && !newEliminated.includes(p.id)).length;
+          
+          if (aliveImps === 0 || aliveImps >= aliveInnos) {
+            const winner = aliveImps === 0 ? 'INNOCENTS' : 'IMPOSTORS';
+            if (mode === 'LOCAL') { setTurnInfo({...turnInfo, eliminated: newEliminated, winner}); setScreen('RESULT'); }
+            else await supabase.from('rooms').update({ game_state: 'RESULT', turn_info: {...turnInfo, eliminated: newEliminated, winner} }).eq('code', roomCode);
+          } else {
+            const word = getRandomWord(selectedCategory.items, selectedCategory.id);
+            const newTurnOrder = shuffleArray(players.filter(p => !newEliminated.includes(p.id)).map(p => p.id));
+            if (mode === 'LOCAL') { setPlayers(players.map(p => ({...p, clue: ''}))); setTurnInfo({...turnInfo, eliminated: newEliminated, votes: {}, round: (turnInfo.round || 1) + 1, turn_order: newTurnOrder, current_turn_idx: 0, starter: players.find(p=>p.id===newTurnOrder[0])?.name, direction: Math.random()>0.5?'Derecha':'Izquierda' }); setRevealedIdx(0); setScreen('REVEAL'); }
+            else { await supabase.from('players').update({ clue: '' }).eq('room_code', roomCode); await supabase.from('rooms').update({ game_state: 'REVEAL', game_word: word, turn_info: {...turnInfo, eliminated: newEliminated, votes: {}, round: (turnInfo.round || 1) + 1, chat: [], turn_order: newTurnOrder, current_turn_idx: 0, starter: players.find(p=>p.id===newTurnOrder[0])?.name, direction: Math.random()>0.5?'Derecha':'Izquierda' } }).eq('code', roomCode); }
+          }
+        }}>CONTINUAR</button>}
       </div>
     );
   }
