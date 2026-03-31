@@ -468,10 +468,11 @@ function GamePhase({ screen, setScreen, mode, players, setPlayers, playerId, rev
     if (mode === 'ONLINE') {
       const counts: Record<string, number> = {};
       Object.values(votes).forEach((id: any) => { counts[id] = (counts[id] || 0) + 1; });
-      votedId = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b, Object.keys(counts)[0]);
+      const keys = Object.keys(counts);
+      votedId = keys.length > 0 ? keys.reduce((a, b) => counts[a] > counts[b] ? a : b) : null;
     }
 
-    const votedPlayer = players.find(p => p.id === votedId);
+    const votedPlayer = players.find((p: any) => p.id === votedId);
     
     const nextRound = async () => {
       const newEliminated = [...(turnInfo.eliminated || []), votedId];
