@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Users, Play, UserPlus, Info, Trophy, Ghost, User, Settings, Check, X, LogIn, ArrowLeft, Clock, Send, CheckCircle2, FastForward, ChevronRight, MessageSquare, PenTool } from 'lucide-react';
+import { Users, Play, UserPlus, Info, Trophy, Ghost, User, Settings, Check, X, LogIn, ArrowLeft, Clock, Send, MessageSquare, PenTool, FastForward, ChevronRight, Skull } from 'lucide-react';
 import { CATEGORIES, Category, GameItem } from './data/categories';
 import { supabase } from './supabase';
 
 type GameMode = 'LOCAL' | 'ONLINE';
-type Screen = 'START' | 'LOBBY' | 'REVEAL' | 'WRITING' | 'DEBATE' | 'VOTING' | 'RESULT';
+type Screen = 'START' | 'LOBBY' | 'INPUT_CUSTOM' | 'REVEAL' | 'WRITING' | 'DEBATE' | 'VOTING' | 'VOTE_RESULT' | 'RESULT';
 
 interface GameSettings {
   impostorsKnowEachOther: boolean;
@@ -35,7 +35,7 @@ export default function App() {
   
   const [isHost, setIsHost] = useState(false);
   const [revealedIdx, setRevealedIdx] = useState(0);
-  const [turnInfo, setTurnInfo] = useState<any>({ starter: null, direction: 'Horario', chat: [] });
+  const [turnInfo, setTurnInfo] = useState<any>({ starter: null, direction: 'Horario', chat: [], customWords: [], votes: {}, eliminated: [], round: 1 });
 
   // --- SINCRONIZACIÓN ONLINE ---
   useEffect(() => {
@@ -47,7 +47,7 @@ export default function App() {
         setScreen(data.game_state);
         setGameWord(data.game_word);
         setSettings(data.settings);
-        setTurnInfo(data.turn_info || { starter: null, direction: 'Horario', chat: [] });
+        setTurnInfo(data.turn_info || { starter: null, direction: 'Horario', chat: [], customWords: [], votes: {}, eliminated: [], round: 1 });
       }).subscribe();
 
     const playersSub = supabase.channel(`players-${roomCode}`)
@@ -64,13 +64,12 @@ export default function App() {
     const code = Math.random().toString(36).substr(2, 4).toUpperCase();
     const myId = Math.random().toString(36).substr(2, 9);
     
-    const initialTurnInfo = { starter: null, direction: 'Horario', chat: [] };
+    const initialTurnInfo = { starter: null, direction: 'Horario', chat: [], customWords: [], votes: {}, eliminated: [], round: 1 };
     
     const { error: roomErr } = await supabase.from('rooms').insert([{ code, settings, game_state: 'LOBBY', turn_info: initialTurnInfo }]);
     if (roomErr) return alert('Error al crear sala: ' + roomErr.message);
     
-    const { error: playerErr } = await supabase.from('players').insert([{ id: myId, room_code: code, name: currentPlayerName, is_host: true }]);
-    if (playerErr) return alert('Error al crear jugador: ' + playerErr.message);
+    await supabase.from('players').insert([{ id: myId, room_code: code, name: currentPlayerName, is_host: true }]);
 
     setRoomCode(code); setPlayerId(myId); setIsHost(true); setMode('ONLINE'); setScreen('LOBBY');
   };
@@ -78,21 +77,42 @@ export default function App() {
   const joinRoom = async (code: string) => {
     if (!currentPlayerName.trim()) return alert('Poné tu nombre');
     const cleanCode = code.toUpperCase();
-    
     const { data: room, error: roomError } = await supabase.from('rooms').select('code').eq('code', cleanCode).single();
     if (roomError || !room) return alert('No se encontró la sala. Revisá el código.');
 
     const myId = Math.random().toString(36).substr(2, 9);
-    const { error } = await supabase.from('players').insert([{ id: myId, room_code: cleanCode, name: currentPlayerName }]);
-    if (error) return alert('Error al unirse: ' + error.message);
-    
+    await supabase.from('players').insert([{ id: myId, room_code: cleanCode, name: currentPlayerName }]);
     setRoomCode(cleanCode); setPlayerId(myId); setIsHost(false); setMode('ONLINE'); setScreen('LOBBY');
+  };
+
+  // MEMORIA DE PALABRAS PARA NO REPETIR
+  const getUsedWords = (catId: string) => JSON.parse(localStorage.getItem('used_words_' + catId) || '[]');
+  const addUsedWord = (catId: string, word: string) => {
+    const used = getUsedWords(catId);
+    localStorage.setItem('used_words_' + catId, JSON.stringify([...used, word]));
+  };
+  const getRandomWord = (items: any[], catId: string) => {
+    let available = items.filter(i => !getUsedWords(catId).includes(i.name || i));
+    if (available.length === 0) {
+      localStorage.removeItem('used_words_' + catId);
+      available = items;
+    }
+    const selected = available[Math.floor(Math.random() * available.length)];
+    addUsedWord(catId, selected.name || selected);
+    return typeof selected === 'string' ? { name: selected, sub: 'Amigo', clue: 'Alguien de la banda' } : selected;
   };
 
   const startOnlineGame = async () => {
     if (players.length < 3) return alert('Mínimo 3 jugadores');
-    const word = selectedCategory.items[Math.floor(Math.random() * selectedCategory.items.length)];
     
+    if (selectedCategory.isCustom) {
+      await supabase.from('rooms').update({ game_state: 'INPUT_CUSTOM', turn_info: { ...turnInfo, customWords: [], eliminated: [], round: 1, chat: [], votes: {} } }).eq('code', roomCode);
+      return;
+    }
+
+    const word = getRandomWord(selectedCategory.items, selectedCategory.id);
+    
+    // Fisher-Yates Shuffle para Impostores
     const shuffled = [...players];
     for (let i = shuffled.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
@@ -105,18 +125,17 @@ export default function App() {
     for (const p of players) {
       await supabase.from('players').update({ is_ready: false, is_impostor: imps.includes(p.id), clue: '' }).eq('id', p.id);
     }
-    
-    await supabase.from('rooms').update({ 
-      game_state: 'REVEAL', 
-      game_word: word, 
-      turn_info: { starter, direction, chat: [] }, 
-      settings 
-    }).eq('code', roomCode);
+    await supabase.from('rooms').update({ game_state: 'REVEAL', game_word: word, turn_info: { starter, direction, chat: [], votes: {}, eliminated: [], round: 1, customWords: [] }, settings }).eq('code', roomCode);
   };
 
   const startLocalGame = () => {
     if (players.length < 3) return alert('Mínimo 3 jugadores');
-    const word = selectedCategory.items[Math.floor(Math.random() * selectedCategory.items.length)];
+    if (selectedCategory.isCustom) {
+      setScreen('INPUT_CUSTOM');
+      return;
+    }
+
+    const word = getRandomWord(selectedCategory.items, selectedCategory.id);
     const shuffled = [...players].sort(() => Math.random() - 0.5);
     const imps = shuffled.slice(0, impostorCount).map(p => p.id);
     const starter = players[Math.floor(Math.random() * players.length)].name;
@@ -124,7 +143,7 @@ export default function App() {
     
     setGameWord(word);
     setPlayers(players.map(p => ({ ...p, is_impostor: imps.includes(p.id), is_ready: false, clue: '' })));
-    setTurnInfo({ starter, direction, chat: [] });
+    setTurnInfo({ starter, direction, chat: [], votes: {}, eliminated: [], round: 1, customWords: [] });
     setRevealedIdx(0);
     setScreen('REVEAL');
   };
@@ -132,7 +151,7 @@ export default function App() {
   return (
     <div className="screen">
       <h1 className="title" style={{ fontSize: '1.8rem' }}>IMPOSTOR<br/>PARA LA BANDA 🇦🇷</h1>
-      <p style={{ textAlign: 'center', fontSize: '0.6rem', color: '#aaa', marginTop: '-15px', marginBottom: '10px' }}>v1.6.2 - Debate Escrito Activado</p>
+      <p style={{ textAlign: 'center', fontSize: '0.6rem', color: '#aaa', marginTop: '-15px', marginBottom: '10px' }}>v1.7.0 - Rondas, Votos y Conocidos</p>
       
       <AnimatePresence mode="wait">
         {screen === 'START' && (
@@ -181,12 +200,10 @@ export default function App() {
                   <h4 style={{ margin: '0 0 10px 0' }}><Settings size={16} /> Reglas Extra</h4>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '8px' }}>
                     <ToggleButton label="Cronómetro (30s)" value={settings.useTimer} onClick={() => setSettings({...settings, useTimer: !settings.useTimer})} />
-                    <ToggleButton label="Ver Sub-categoría" value={settings.revealSubCategory} onClick={() => setSettings({...settings, revealSubCategory: !settings.revealSubCategory})} />
-                    <ToggleButton label="Pista de Gemini" value={settings.giveImpostorClue} onClick={() => setSettings({...settings, giveImpostorClue: !settings.giveImpostorClue})} />
+                    {!selectedCategory.isCustom && <ToggleButton label="Ver Sub-categoría" value={settings.revealSubCategory} onClick={() => setSettings({...settings, revealSubCategory: !settings.revealSubCategory})} />}
+                    {!selectedCategory.isCustom && <ToggleButton label="Pista de Gemini" value={settings.giveImpostorClue} onClick={() => setSettings({...settings, giveImpostorClue: !settings.giveImpostorClue})} />}
                     <ToggleButton label="Impostores se conocen" value={settings.impostorsKnowEachOther} onClick={() => setSettings({...settings, impostorsKnowEachOther: !settings.impostorsKnowEachOther})} />
-                    {mode === 'ONLINE' && (
-                      <ToggleButton label="Debate Escrito" value={settings.writtenClues} onClick={() => setSettings({...settings, writtenClues: !settings.writtenClues})} />
-                    )}
+                    {mode === 'ONLINE' && <ToggleButton label="Debate Escrito" value={settings.writtenClues} onClick={() => setSettings({...settings, writtenClues: !settings.writtenClues})} />}
                   </div>
                 </div>
                 <button className="btn btn-accent" onClick={mode === 'LOCAL' ? startLocalGame : startOnlineGame} disabled={players.length < 3}>¡EMPEZAR!</button>
@@ -199,8 +216,8 @@ export default function App() {
         {(screen !== 'START' && screen !== 'LOBBY') && (
           <GamePhase 
             screen={screen} setScreen={setScreen} mode={mode} 
-            players={players} playerId={playerId} revealedIdx={revealedIdx} setRevealedIdx={setRevealedIdx}
-            gameWord={gameWord} settings={settings} roomCode={roomCode} isHost={isHost} turnInfo={turnInfo} setTurnInfo={setTurnInfo}
+            players={players} setPlayers={setPlayers} playerId={playerId} revealedIdx={revealedIdx} setRevealedIdx={setRevealedIdx}
+            gameWord={gameWord} setGameWord={setGameWord} settings={settings} roomCode={roomCode} isHost={isHost} turnInfo={turnInfo} setTurnInfo={setTurnInfo} getRandomWord={getRandomWord} impostorCount={impostorCount}
           />
         )}
       </AnimatePresence>
@@ -216,17 +233,22 @@ function ToggleButton({ label, value, onClick }: any) {
   );
 }
 
-function GamePhase({ screen, setScreen, mode, players, playerId, revealedIdx, setRevealedIdx, gameWord, settings, roomCode, isHost, turnInfo, setTurnInfo }: any) {
+function GamePhase({ screen, setScreen, mode, players, setPlayers, playerId, revealedIdx, setRevealedIdx, gameWord, setGameWord, settings, roomCode, isHost, turnInfo, setTurnInfo, getRandomWord, impostorCount }: any) {
   const [show, setShow] = useState(false);
   const [timeLeft, setTimeLeft] = useState(30);
   const [clueInput, setClueInput] = useState('');
   const [chatInput, setChatInput] = useState('');
-  const [votedId, setVotedId] = useState('');
+  const [customNames, setCustomNames] = useState(['', '', '']);
+  const [localCustomWords, setLocalCustomWords] = useState<string[]>([]);
+  const [localCustomIdx, setLocalCustomIdx] = useState(0);
+
   const chatEndRef = useRef<HTMLDivElement>(null);
   
-  const me = mode === 'LOCAL' ? players[revealedIdx] : players.find((p: any) => p.id === playerId) || players[0];
+  const activePlayers = players.filter((p:any) => !(turnInfo.eliminated || []).includes(p.id));
+  const me = mode === 'LOCAL' ? activePlayers[revealedIdx] : players.find((p: any) => p.id === playerId) || players[0];
   const isImpostor = me?.is_impostor;
-  const otherImpostors = players.filter((p:any) => p.is_impostor && p.id !== me.id);
+  const otherImpostors = activePlayers.filter((p:any) => p.is_impostor && p.id !== me.id);
+  const isEliminated = (turnInfo.eliminated || []).includes(playerId);
 
   // Timer
   useEffect(() => {
@@ -245,7 +267,7 @@ function GamePhase({ screen, setScreen, mode, players, playerId, revealedIdx, se
   };
 
   const sendChatMessage = async () => {
-    if (!chatInput.trim()) return;
+    if (!chatInput.trim() || isEliminated) return;
     const newChat = [...(turnInfo.chat || []), { sender: me.name, text: chatInput }];
     if (mode === 'LOCAL') {
       setTurnInfo({ ...turnInfo, chat: newChat });
@@ -255,11 +277,78 @@ function GamePhase({ screen, setScreen, mode, players, playerId, revealedIdx, se
     setChatInput('');
   };
 
-  if (screen === 'REVEAL') {
+  if (screen === 'INPUT_CUSTOM') {
+    const handleCustomSubmit = async () => {
+      if (customNames.some(n => !n.trim())) return alert('Completá los 3 nombres');
+      
+      if (mode === 'LOCAL') {
+        const newLocalWords = [...localCustomWords, ...customNames];
+        setLocalCustomWords(newLocalWords);
+        setCustomNames(['', '', '']);
+        if (localCustomIdx < players.length - 1) {
+          setLocalCustomIdx(localCustomIdx + 1);
+        } else {
+          const word = getRandomWord(newLocalWords, 'conocidos');
+          const shuffled = [...players].sort(() => Math.random() - 0.5);
+          const imps = shuffled.slice(0, impostorCount).map(p => p.id);
+          setGameWord(word);
+          setPlayers(players.map(p => ({ ...p, is_impostor: imps.includes(p.id) })));
+          setTurnInfo({ ...turnInfo, customWords: newLocalWords });
+          setScreen('REVEAL');
+        }
+      } else {
+        const { data } = await supabase.from('rooms').select('turn_info').eq('code', roomCode).single();
+        const currentWords = data?.turn_info.customWords || [];
+        await supabase.from('rooms').update({ turn_info: { ...turnInfo, customWords: [...currentWords, ...customNames] } }).eq('code', roomCode);
+        await supabase.from('players').update({ is_ready: true }).eq('id', playerId);
+      }
+    };
+
     return (
       <div className="card">
-        <div style={{ textAlign: 'center', marginBottom: '10px' }}><span className="btn btn-accent" style={{ width: 'auto' }}>Arranca: {turnInfo?.starter} ({turnInfo?.direction})</span></div>
-        <h3 style={{display:'flex', alignItems:'center', gap:'10px'}}><Info size={20}/> Revelación</h3>
+        <h3>👥 Aportes de Conocidos</h3>
+        <p style={{fontSize:'0.8rem'}}>Escribí 3 nombres de amigos o gente que todos conozcan.</p>
+        {mode === 'LOCAL' && <p style={{fontWeight:'bold', color:'var(--celeste)'}}>Turno de: {players[localCustomIdx].name}</p>}
+        {customNames.map((n, i) => (
+          <input key={i} className="input" value={n} onChange={(e) => { const next = [...customNames]; next[i] = e.target.value; setCustomNames(next); }} placeholder={`Nombre ${i + 1}`} disabled={mode === 'ONLINE' && me.is_ready} />
+        ))}
+        {mode === 'LOCAL' ? (
+          <button className="btn btn-primary" onClick={handleCustomSubmit}>SIGUIENTE</button>
+        ) : (
+          <>
+            <button className="btn btn-primary" onClick={handleCustomSubmit} disabled={me.is_ready}>{me.is_ready ? 'ENVIADO ✅' : 'ENVIAR NOMBRES'}</button>
+            {isHost && (
+              <button className="btn btn-accent" style={{marginTop:'20px'}} onClick={async () => {
+                const { data } = await supabase.from('rooms').select('turn_info').eq('code', roomCode).single();
+                const allWords = data?.turn_info.customWords || [];
+                if (allWords.length === 0) return alert('Nadie mandó nombres');
+                const word = getRandomWord(allWords, 'conocidos');
+                await supabase.from('rooms').update({ game_state: 'REVEAL', game_word: word }).eq('code', roomCode);
+              }}>SORTEAR Y EMPEZAR JUEGO</button>
+            )}
+          </>
+        )}
+      </div>
+    );
+  }
+
+  if (screen === 'REVEAL') {
+    if (isEliminated) {
+      return (
+        <div className="card" style={{textAlign:'center'}}>
+          <Skull size={48} color="#666" style={{margin:'0 auto 10px'}}/>
+          <h3>Fuiste eliminado</h3>
+          <p>Esperá a que los demás terminen la ronda.</p>
+          {isHost && <button className="btn btn-accent" style={{marginTop:'15px', fontSize:'0.8rem'}} onClick={() => handleNextStage(settings.writtenClues ? 'WRITING' : 'DEBATE')}>AVANZAR A LA BANDA <ChevronRight size={16}/></button>}
+        </div>
+      );
+    }
+    return (
+      <div className="card">
+        <div style={{ textAlign: 'center', marginBottom: '10px' }}>
+          <span className="btn btn-accent" style={{ width: 'auto' }}>Ronda {turnInfo.round} - Arranca: {turnInfo?.starter} ({turnInfo?.direction})</span>
+        </div>
+        <h3>{me?.name}, tu secreto</h3>
         <div className="role-reveal" onClick={() => setShow(!show)}>
           {!show ? 'TAP PARA VER' : (
             <div>
@@ -267,7 +356,7 @@ function GamePhase({ screen, setScreen, mode, players, playerId, revealedIdx, se
                 <div style={{ color: '#E74C3C' }}><Ghost size={48}/><br/>SOS EL IMPOSTOR
                   {settings.revealSubCategory && <p style={{color: '#333'}}>Tipo: {gameWord?.sub}</p>}
                   {settings.impostorsKnowEachOther && otherImpostors.length > 0 && <p style={{fontSize: '0.7rem', color: '#666'}}>Cómplices: {otherImpostors.map((p: any) => p.name).join(', ')}</p>}
-                  {settings.giveImpostorClue && <p style={{fontSize: '0.9rem', color: '#333'}}>💡 Pista: {gameWord?.clue}</p>}
+                  {settings.giveImpostorClue && gameWord?.clue && <p style={{fontSize: '0.9rem', color: '#333'}}>💡 Pista: {gameWord?.clue}</p>}
                 </div>
               ) : (
                 <div style={{ color: 'var(--accent)' }}><Info size={48}/><br/>PALABRA: {gameWord?.name}
@@ -281,11 +370,11 @@ function GamePhase({ screen, setScreen, mode, players, playerId, revealedIdx, se
         {show && (
           <div style={{ marginTop: '20px' }}>
             {mode === 'LOCAL' ? (
-              <button className="btn btn-primary" onClick={() => { setShow(false); setTimeLeft(30); if (revealedIdx < players.length - 1) setRevealedIdx(revealedIdx + 1); else setScreen('DEBATE'); }}>SIGUIENTE</button>
+              <button className="btn btn-primary" onClick={() => { setShow(false); setTimeLeft(30); if (revealedIdx < activePlayers.length - 1) setRevealedIdx(revealedIdx + 1); else setScreen(settings.writtenClues ? 'WRITING' : 'DEBATE'); }}>SIGUIENTE</button>
             ) : (
               <>
                 <button className={`btn ${me.is_ready ? 'btn-secondary' : 'btn-primary'}`} onClick={async () => await supabase.from('players').update({ is_ready: true }).eq('id', playerId)}>
-                  {me.is_ready ? `LISTOS: ${players.filter((p:any)=>p.is_ready).length}/${players.length}` : 'YA LEÍ, ESTOY LISTO'}
+                  {me.is_ready ? `LISTOS: ${players.filter((p:any)=>p.is_ready).length}/${activePlayers.length}` : 'YA LEÍ, ESTOY LISTO'}
                 </button>
                 {isHost && <button className="btn btn-accent" style={{marginTop:'15px', fontSize:'0.8rem'}} onClick={() => handleNextStage(settings.writtenClues ? 'WRITING' : 'DEBATE')}>AVANZAR A LA BANDA <ChevronRight size={16}/></button>}
               </>
@@ -301,8 +390,8 @@ function GamePhase({ screen, setScreen, mode, players, playerId, revealedIdx, se
       <div className="card">
         <h3><PenTool size={20}/> Modo Escritura</h3>
         <p style={{fontSize:'0.8rem'}}>Escribí una pista sobre tu palabra.</p>
-        <input className="input" value={clueInput} onChange={(e) => setClueInput(e.target.value)} placeholder="Ej: Es verde..." disabled={mode === 'ONLINE' && !!me.clue} />
-        <button className="btn btn-primary" onClick={async () => { if (mode === 'LOCAL') setScreen('DEBATE'); else await supabase.from('players').update({ clue: clueInput }).eq('id', playerId); }} disabled={mode === 'ONLINE' && (!!me.clue || !clueInput)}>
+        <input className="input" value={clueInput} onChange={(e) => setClueInput(e.target.value)} placeholder="Ej: Es verde..." disabled={(mode === 'ONLINE' && !!me.clue) || isEliminated} />
+        <button className="btn btn-primary" onClick={async () => { if (mode === 'LOCAL') setScreen('DEBATE'); else await supabase.from('players').update({ clue: clueInput }).eq('id', playerId); }} disabled={(mode === 'ONLINE' && (!!me.clue || !clueInput)) || isEliminated}>
           {mode === 'ONLINE' && me.clue ? 'Enviado ✅' : 'ENVIAR PISTA'}
         </button>
         {isHost && mode === 'ONLINE' && <button className="btn btn-accent" style={{marginTop:'20px'}} onClick={() => handleNextStage('DEBATE')}>IR AL DEBATE</button>}
@@ -318,13 +407,13 @@ function GamePhase({ screen, setScreen, mode, players, playerId, revealedIdx, se
           {settings.writtenClues && mode === 'ONLINE' && (
             <div style={{background:'white', padding:'8px', borderRadius:'8px', marginBottom:'10px', boxShadow:'0 2px 4px rgba(0,0,0,0.05)'}}>
               <strong>Pistas iniciales:</strong>
-              {players.map((p:any) => <div key={p.id} style={{fontSize:'0.75rem', borderBottom:'1px solid #eee', padding:'5px 0'}}>• {p.name}: {p.clue || '...'}</div>)}
+              {activePlayers.map((p:any) => <div key={p.id} style={{fontSize:'0.75rem', borderBottom:'1px solid #eee', padding:'5px 0'}}>• {p.name}: {p.clue || '...'}</div>)}
             </div>
           )}
           {(turnInfo.chat || []).map((m: any, i: number) => ( <div key={i} style={{ marginBottom: '5px', background: 'white', padding: '8px', borderRadius: '8px', fontSize: '0.85rem' }}><strong>{m.sender}:</strong> {m.text}</div> ))}
           <div ref={chatEndRef} />
         </div>
-        {mode === 'ONLINE' && (
+        {mode === 'ONLINE' && !isEliminated && (
           <div style={{ display: 'flex', gap: '5px' }}>
             <input className="input" value={chatInput} onChange={(e) => setChatInput(e.target.value)} style={{marginBottom: 0}} placeholder="Escribí acá..." onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()} />
             <button className="btn btn-primary" onClick={sendChatMessage} style={{width: 'auto', marginBottom: 0}}><Send size={18}/></button>
@@ -336,16 +425,95 @@ function GamePhase({ screen, setScreen, mode, players, playerId, revealedIdx, se
   }
 
   if (screen === 'VOTING') {
+    const totalVotesCast = Object.keys(turnInfo.votes || {}).length;
+    
     return (
       <div className="card">
         <h3><CheckCircle2 size={20}/> Votación</h3>
-        <p style={{textAlign:'center'}}>El Host elige al acusado final.</p>
-        <div className="grid">
-          {players.map((p: any) => <button key={p.id} className={`btn ${votedId === p.id ? 'btn-primary' : 'btn-secondary'}`} onClick={() => isHost && setVotedId(p.id)}>{p.name}</button>)}
-        </div>
-        {isHost && votedId && (
-          <button className="btn btn-accent" style={{marginTop:'20px'}} onClick={() => handleNextStage('RESULT')}>REVELAR AL ACUSADO</button>
+        <p style={{textAlign:'center', fontSize:'0.8rem'}}>Votá por quién creés que es el impostor.</p>
+        
+        {isEliminated ? (
+          <p style={{textAlign:'center', color:'red'}}>Estás eliminado, no podés votar.</p>
+        ) : (
+          <div className="grid">
+            {activePlayers.map((p: any) => (
+              <button key={p.id} className={`btn ${turnInfo.votes?.[playerId] === p.id ? 'btn-primary' : 'btn-secondary'}`} onClick={async () => {
+                if (mode === 'LOCAL') {
+                  setTurnInfo({ ...turnInfo, votes: { ...turnInfo.votes, localVote: p.id } }); // Local votes are direct
+                } else {
+                  await supabase.from('rooms').update({ turn_info: { ...turnInfo, votes: { ...turnInfo.votes, [playerId]: p.id } } }).eq('code', roomCode);
+                }
+              }}>
+                {p.name}
+              </button>
+            ))}
+          </div>
         )}
+
+        {isHost && (
+          <div style={{marginTop:'20px', borderTop:'2px solid #eee', paddingTop:'10px', textAlign:'center'}}>
+            {mode === 'ONLINE' && <p>Votos emitidos: {totalVotesCast} / {activePlayers.length}</p>}
+            <button className="btn btn-accent" onClick={() => handleNextStage('VOTE_RESULT')}>TERMINAR VOTACIÓN Y VER RESULTADO</button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (screen === 'VOTE_RESULT') {
+    // Calcular más votado
+    const votes = turnInfo.votes || {};
+    let votedId = mode === 'LOCAL' ? votes.localVote : null;
+    
+    if (mode === 'ONLINE') {
+      const counts: Record<string, number> = {};
+      Object.values(votes).forEach((id: any) => { counts[id] = (counts[id] || 0) + 1; });
+      votedId = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b, Object.keys(counts)[0]);
+    }
+
+    const votedPlayer = players.find(p => p.id === votedId);
+    
+    const nextRound = async () => {
+      const newEliminated = [...(turnInfo.eliminated || []), votedId];
+      const remainingImps = players.filter(p => p.is_impostor && !newEliminated.includes(p.id)).length;
+      
+      if (remainingImps > 0 && activePlayers.length - 1 > remainingImps) {
+        // RONDA 2: Nueva palabra
+        let word;
+        if (turnInfo.customWords && turnInfo.customWords.length > 0) {
+          word = getRandomWord(turnInfo.customWords, 'conocidos');
+        } else {
+          word = getRandomWord(selectedCategory.items, selectedCategory.id);
+        }
+        
+        if (mode === 'LOCAL') {
+          setGameWord(word); setTurnInfo({ ...turnInfo, eliminated: newEliminated, votes: {}, round: turnInfo.round + 1 });
+          setRevealedIdx(0); setScreen('REVEAL');
+        } else {
+          for (const p of players) await supabase.from('players').update({ is_ready: false, clue: '' }).eq('id', p.id);
+          await supabase.from('rooms').update({ game_state: 'REVEAL', game_word: word, turn_info: { ...turnInfo, eliminated: newEliminated, votes: {}, round: turnInfo.round + 1, chat: [] } }).eq('code', roomCode);
+        }
+      } else {
+        // FIN DEL JUEGO
+        handleNextStage('RESULT');
+      }
+    };
+
+    return (
+      <div className="card" style={{textAlign:'center'}}>
+        <h2>Resultado Votación</h2>
+        <h3 style={{color:'var(--accent)'}}>{votedPlayer?.name} fue el más votado.</h3>
+        
+        {isHost && (
+          <div style={{marginTop:'20px'}}>
+            <p>¿Era impostor?</p>
+            <p style={{fontSize:'2rem'}}>{votedPlayer?.is_impostor ? 'SÍ 😈' : 'NO 😇'}</p>
+            <button className="btn btn-primary" onClick={nextRound}>
+              {players.filter(p => p.is_impostor && !(turnInfo.eliminated || []).includes(p.id) && p.id !== votedId).length > 0 ? 'QUEDAN IMPOSTORES (SIGUIENTE RONDA)' : 'VER RESULTADO FINAL'}
+            </button>
+          </div>
+        )}
+        {!isHost && <p>El anfitrión revelará si era el impostor...</p>}
       </div>
     );
   }
@@ -353,11 +521,11 @@ function GamePhase({ screen, setScreen, mode, players, playerId, revealedIdx, se
   return (
     <div className="card" style={{ textAlign: 'center' }}>
       <Trophy size={48} color="var(--oro)" />
-      <h2>RESULTADO</h2>
+      <h2>RESULTADO FINAL</h2>
       <p>La palabra era: <strong>{gameWord?.name}</strong></p>
-      <p>Los Impostores eran:</p>
+      <p>Todos los Impostores:</p>
       <div className="grid">{players.filter((p:any) => p.is_impostor).map((p:any) => <div key={p.id} className="btn btn-accent">{p.name}</div>)}</div>
-      {isHost && <button className="btn btn-primary" style={{marginTop:'20px'}} onClick={() => handleNextStage('LOBBY')}>OTRA PARTIDA</button>}
+      {isHost && <button className="btn btn-primary" style={{marginTop:'20px'}} onClick={async () => { if (mode === 'LOCAL') setScreen('LOBBY'); else await supabase.from('rooms').update({ game_state: 'LOBBY', turn_info: { starter: null, direction: 'Horario', chat: [], customWords: [], votes: {}, eliminated: [], round: 1 } }).eq('code', roomCode); }}>OTRA PARTIDA</button>}
     </div>
   );
 }
