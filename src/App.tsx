@@ -276,16 +276,20 @@ function GamePhase({ screen, setScreen, mode, players, setPlayers, playerId, rev
   if (screen === 'DEBATE') {
     return (
       <div className="card" style={{ height: '80vh', display: 'flex', flexDirection: 'column' }}>
-        <h3><MessageSquare size={20}/> Debate</h3>
-        <div style={{ flex: 1, overflowY: 'auto', background: '#f0f0f0', padding: '10px', borderRadius: '10px' }}>
+        <h3><MessageSquare size={20}/> Debate Ronda {turnInfo?.round}</h3>
+        <div style={{ flex: 1, overflowY: 'auto', background: '#f0f0f0', padding: '10px', borderRadius: '10px', marginBottom: '10px' }}>
+          <div style={{background:'white', padding:'8px', borderRadius:'8px', marginBottom:'10px', boxShadow:'0 2px 4px rgba(0,0,0,0.05)'}}>
+            <strong>Pistas de esta ronda:</strong>
+            {activePlayers.map((p:any) => <div key={p.id} style={{fontSize:'0.75rem', borderBottom:'1px solid #eee', padding:'5px 0'}}>• {p.name}: {p.clue || '...'}</div>)}
+          </div>
           {(turnInfo?.chat || []).map((m: any, i: number) => <div key={i} style={{ background: 'white', padding: '5px', borderRadius: '5px', marginBottom: '5px' }}><strong>{m.sender}:</strong> {m.text}</div>)}
           <div ref={chatEndRef} />
         </div>
         <div style={{ display: 'flex', gap: '5px', marginTop: '10px' }}>
-          <input className="input" value={chatInput} onChange={(e) => setChatInput(e.target.value)} style={{marginBottom: 0}} />
+          <input className="input" value={chatInput} onChange={(e) => setChatInput(e.target.value)} style={{marginBottom: 0}} disabled={isEliminated} placeholder="Tu argumento..." />
           <button className="btn btn-primary" onClick={async () => { if(!chatInput.trim())return; const newChat = [...(turnInfo?.chat || []), {sender: me.name, text: chatInput}]; if (mode === 'LOCAL') setTurnInfo({...turnInfo, chat: newChat}); else await supabase.from('rooms').update({ turn_info: {...turnInfo, chat: newChat} }).eq('code', roomCode); setChatInput(''); }} style={{width:'auto'}}><Send size={18}/></button>
         </div>
-        {isHost && <button className="btn btn-accent" style={{marginTop:'10px'}} onClick={() => handleNextStage('VOTING')}>VOTAR</button>}
+        {isHost && <button className="btn btn-accent" style={{marginTop:'10px'}} onClick={() => handleNextStage('VOTING')}>IR A VOTAR</button>}
       </div>
     );
   }
