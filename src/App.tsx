@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Users, Play, UserPlus, Info, Trophy, Ghost, User, Settings, Check, X, LogIn, ArrowLeft, Clock, Send, MessageSquare } from 'lucide-react';
+import { Users, Play, UserPlus, Info, Trophy, Ghost, User, Settings, Check, X, LogIn, ArrowLeft, Clock, Send, MessageSquare, CheckCircle2 } from 'lucide-react';
 import { CATEGORIES, Category, GameItem } from './data/categories';
 import { supabase } from './supabase';
 
@@ -49,28 +49,12 @@ export default function App() {
   const [turnInfo, setTurnInfo] = useState<TurnInfo>({ starter: null, direction: 'Horario' });
   const [playerClues, setPlayerClues] = useState<Record<string, string>>({});
   const [chatMessages, setChatMessages] = useState<any[]>([]);
+  const [readyPlayers, setReadyPlayers] = useState<string[]>([]);
 
   // --- LÓGICA DE TIEMPO REAL MEJORADA ---
   useEffect(() => {
     if (mode !== 'ONLINE' || !roomCode) return;
 
-    // 1. Cargar datos iniciales
-    const fetchRoom = async () => {
-      const { data } = await supabase.from('rooms').select('*').eq('code', roomCode).single();
-      if (data) {
-        setPlayers(data.players || []);
-        setScreen(data.game_state as Screen);
-        setGameWord(data.game_word);
-        setImpostorIds(data.impostor_ids || []);
-        setSettings(data.settings);
-        setTurnInfo(data.turn_info);
-        setPlayerClues(data.player_clues || {});
-        setChatMessages(data.chat_messages || []);
-      }
-    };
-    fetchRoom();
-
-    // 2. Suscribirse a cambios
     const channel = supabase
       .channel(`room-${roomCode}`)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `code=eq.${roomCode}` }, (payload) => {
@@ -83,13 +67,24 @@ export default function App() {
         setTurnInfo(data.turn_info);
         setPlayerClues(data.player_clues || {});
         setChatMessages(data.chat_messages || []);
+        setReadyPlayers(data.ready_players || []);
       })
-      .subscribe((status) => {
-        console.log("Supabase Status:", status);
-      });
+      .subscribe();
 
     return () => { supabase.removeChannel(channel); };
   }, [mode, roomCode]);
+
+  // Auto-avanzar cuando todos están listos (Solo el Host dispara el cambio para evitar conflictos)
+  useEffect(() => {
+    if (isHost && mode === 'ONLINE' && screen === 'REVEAL' && readyPlayers.length > 0 && readyPlayers.length === players.length) {
+      setTimeout(() => {
+        supabase.from('rooms').update({ 
+          game_state: settings.writtenClues ? 'WRITING' : 'VOTING',
+          ready_players: [] 
+        }).eq('code', roomCode);
+      }, 1000);
+    }
+  }, [readyPlayers, players, isHost, screen]);
 
   const generateCode = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -108,7 +103,8 @@ export default function App() {
       code,
       players: [me],
       game_state: 'LOBBY',
-      settings
+      settings,
+      ready_players: []
     }]);
 
     if (error) return alert('Error Supabase: ' + error.message);
@@ -124,7 +120,7 @@ export default function App() {
     if (!currentPlayerName.trim()) return alert('Poné tu nombre');
     const cleanCode = code.toUpperCase();
     const { data, error } = await supabase.from('rooms').select('*').eq('code', cleanCode).single();
-    if (error || !data) return alert('No se encontró la sala. Revisá el código.');
+    if (error || !data) return alert('No se encontró la sala.');
 
     const myId = Math.random().toString(36).substr(2, 9);
     const me = { id: myId, name: currentPlayerName };
@@ -138,13 +134,6 @@ export default function App() {
     setIsHost(false);
     setMode('ONLINE');
     setScreen('LOBBY');
-  };
-
-  const addLocalPlayer = () => {
-    if (currentPlayerName.trim()) {
-      setPlayers([...players, { id: Math.random().toString(36).substr(2, 9), name: currentPlayerName }]);
-      setCurrentPlayerName('');
-    }
   };
 
   const startLocalGame = () => {
@@ -173,8 +162,15 @@ export default function App() {
       game_word: word, 
       impostor_ids: imps, 
       settings,
-      turn_info: { starter, direction }
+      turn_info: { starter, direction },
+      ready_players: []
     }).eq('code', roomCode);
+  };
+
+  const setPlayerReady = async () => {
+    if (readyPlayers.includes(playerId)) return;
+    const newReady = [...readyPlayers, playerId];
+    await supabase.from('rooms').update({ ready_players: newReady }).eq('code', roomCode);
   };
 
   const submitClue = async (clue: string) => {
@@ -204,7 +200,7 @@ export default function App() {
               <User size={20} /> Modo Local
             </button>
             <div className="card" style={{ background: '#f0f4f8', padding: '15px', marginTop: '15px' }}>
-              <h4 style={{ margin: '0 0 10px 0' }}>Modo Online</h4>
+              <h4>Modo Online</h4>
               <button className="btn btn-accent" onClick={createRoom} style={{ marginBottom: '10px' }}>Crear Sala</button>
               <div style={{ display: 'flex', gap: '5px' }}>
                 <input className="input" placeholder="Código" maxLength={4} style={{ marginBottom: 0, textTransform: 'uppercase' }} onChange={(e) => setRoomCode(e.target.value.toUpperCase())} />
@@ -280,6 +276,7 @@ export default function App() {
             roomCode={roomCode} isHost={isHost} turnInfo={turnInfo}
             playerClues={playerClues} submitClue={submitClue}
             chatMessages={chatMessages} sendChatMessage={sendChatMessage}
+            readyPlayers={readyPlayers} setPlayerReady={setPlayerReady}
           />
         )}
       </AnimatePresence>
@@ -287,7 +284,7 @@ export default function App() {
   );
 }
 
-function GamePhase({ screen, setScreen, mode, players, playerId, revealedIdx, setRevealedIdx, gameWord, impostorIds, settings, roomCode, isHost, turnInfo, playerClues, submitClue, chatMessages, sendChatMessage }: any) {
+function GamePhase({ screen, setScreen, mode, players, playerId, revealedIdx, setRevealedIdx, gameWord, impostorIds, settings, roomCode, isHost, turnInfo, playerClues, submitClue, chatMessages, sendChatMessage, readyPlayers, setPlayerReady }: any) {
   const [show, setShow] = useState(false);
   const [timeLeft, setTimeLeft] = useState(30);
   const [writtenClue, setWrittenClue] = useState('');
@@ -296,13 +293,14 @@ function GamePhase({ screen, setScreen, mode, players, playerId, revealedIdx, se
 
   const currentPlayer = mode === 'LOCAL' ? players[revealedIdx] : players.find((p: any) => p.id === playerId);
   const isImpostor = impostorIds.includes(currentPlayer?.id);
+  const isReady = readyPlayers.includes(playerId);
 
   useEffect(() => {
-    if (screen === 'REVEAL' && show && settings.useTimer) {
-      const timer = setInterval(() => setTimeLeft(prev => prev > 0 ? prev - 1 : 0), 1000);
+    if (screen === 'REVEAL' && show && settings.useTimer && timeLeft > 0) {
+      const timer = setInterval(() => setTimeLeft(prev => prev - 1), 1000);
       return () => clearInterval(timer);
     }
-  }, [show, screen]);
+  }, [show, screen, timeLeft]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -334,16 +332,20 @@ function GamePhase({ screen, setScreen, mode, players, playerId, revealedIdx, se
           )}
         </div>
         {show && (
-          <button className="btn btn-primary" style={{ marginTop: '20px' }} onClick={async () => {
-            setShow(false);
-            setTimeLeft(30);
-            if (mode === 'LOCAL') {
-              if (revealedIdx < players.length - 1) setRevealedIdx(revealedIdx + 1);
-              else setScreen(settings.writtenClues ? 'WRITING' : 'VOTING');
-            } else {
-              if (isHost) await supabase.from('rooms').update({ game_state: settings.writtenClues ? 'WRITING' : 'VOTING' }).eq('code', roomCode);
-            }
-          }}>LISTO</button>
+          <div style={{ marginTop: '20px' }}>
+            {mode === 'LOCAL' ? (
+              <button className="btn btn-primary" onClick={() => {
+                setShow(false);
+                setTimeLeft(30);
+                if (revealedIdx < players.length - 1) setRevealedIdx(revealedIdx + 1);
+                else setScreen(settings.writtenClues ? 'WRITING' : 'VOTING');
+              }}>SIGUIENTE AMIGO</button>
+            ) : (
+              <button className={`btn ${isReady ? 'btn-secondary' : 'btn-primary'}`} onClick={setPlayerReady} disabled={isReady}>
+                {isReady ? `ESPERANDO AL RESTO (${readyPlayers.length}/${players.length})` : 'LISTO, YA LEÍ'}
+              </button>
+            )}
+          </div>
         )}
       </div>
     );
@@ -357,7 +359,7 @@ function GamePhase({ screen, setScreen, mode, players, playerId, revealedIdx, se
         <p>Escribí tu pista (sin decir la palabra):</p>
         <input className="input" value={writtenClue} onChange={(e) => setWrittenClue(e.target.value)} disabled={alreadySubmitted} placeholder="Ej: Es redondo..." />
         <button className="btn btn-accent" onClick={() => submitClue(writtenClue)} disabled={alreadySubmitted || !writtenClue}>
-          {alreadySubmitted ? 'Esperando al resto...' : 'Enviar Pista'}
+          {alreadySubmitted ? `ESPERANDO (${Object.keys(playerClues).length}/${players.length})` : 'ENVIAR PISTA'}
         </button>
       </div>
     );
@@ -376,7 +378,7 @@ function GamePhase({ screen, setScreen, mode, players, playerId, revealedIdx, se
           <div ref={chatEndRef} />
         </div>
         <div style={{ display: 'flex', gap: '5px' }}>
-          <input className="input" style={{ marginBottom: 0 }} value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="Argumentá acá..." />
+          <input className="input" style={{ marginBottom: 0 }} value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="Argumentá acá..." onKeyDown={(e) => e.key === 'Enter' && (sendChatMessage(chatInput), setChatInput(''))} />
           <button className="btn btn-primary" style={{ width: 'auto', marginBottom: 0 }} onClick={() => { sendChatMessage(chatInput); setChatInput(''); }}><Send size={18}/></button>
         </div>
         {isHost && <button className="btn btn-accent" style={{ marginTop: '10px' }} onClick={async () => await supabase.from('rooms').update({ game_state: 'VOTING' }).eq('code', roomCode)}>IR A VOTAR</button>}
@@ -414,7 +416,7 @@ function GamePhase({ screen, setScreen, mode, players, playerId, revealedIdx, se
       <p>Infiltrados: <strong>{impostorIds.map((id: any) => players.find((p: any) => p.id === id)?.name).join(', ')}</strong></p>
       <button className="btn btn-primary" onClick={async () => {
         if (mode === 'LOCAL') { setScreen('LOBBY'); }
-        else if (isHost) await supabase.from('rooms').update({ game_state: 'LOBBY', player_clues: {}, chat_messages: [] }).eq('code', roomCode);
+        else if (isHost) await supabase.from('rooms').update({ game_state: 'LOBBY', player_clues: {}, chat_messages: [], ready_players: [] }).eq('code', roomCode);
       }}>OTRA PARTIDA</button>
     </div>
   );
