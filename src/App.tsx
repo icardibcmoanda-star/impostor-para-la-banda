@@ -321,9 +321,9 @@ function GamePhase({ screen, setScreen, mode, players, setPlayers, playerId, rev
             {!showSecret ? 'TAP PARA VER' : (
               <div>
                 {settings.playMode === 'BLIND' ? (
-                  <div style={{ color: 'var(--accent)' }}><Info size={48}/><br/>TU PALABRA ES:<br/><strong>{activePlayers[revealedIdx]?.is_impostor ? impostorWord?.name : gameWord?.name}</strong></div>
+                  <div style={{ color: 'var(--accent)' }}><Info size={48}/><br/>TU PALABRA ES:<br/><strong>{activePlayers[revealedIdx]?.is_impostor ? impostorWord?.name : gameWord?.name}</strong><br/>{settings.revealSubCategory && <small style={{color: '#666'}}><br/>Categoría: {activePlayers[revealedIdx]?.is_impostor ? impostorWord?.sub : gameWord?.sub}</small>}</div>
                 ) : (
-                  activePlayers[revealedIdx]?.is_impostor ? <div style={{ color: '#E74C3C' }}><Ghost size={48}/><br/>SOS EL IMPOSTOR<br/><small>Pista: {gameWord?.clue}</small></div> : <div style={{ color: 'var(--accent)' }}><Info size={48}/><br/>PALABRA: {gameWord?.name}</div>
+                  activePlayers[revealedIdx]?.is_impostor ? <div style={{ color: '#E74C3C' }}><Ghost size={48}/><br/>SOS EL IMPOSTOR<br/>{settings.giveImpostorClue && <small>Pista: {gameWord?.clue}</small>}{settings.impostorsKnowEachOther && impostorCount > 1 && <div style={{marginTop: '10px', fontSize: '0.8rem', borderTop: '1px solid #ff9999', paddingTop: '5px'}}>Otros impostores: {players.filter((p: any) => p.is_impostor && p.id !== activePlayers[revealedIdx].id).map((p: any) => p.name).join(', ') || 'Nadie'}</div>}</div> : <div style={{ color: 'var(--accent)' }}><Info size={48}/><br/>PALABRA: {gameWord?.name}<br/>{settings.revealSubCategory && <small style={{color: '#666'}}><br/>Categoría: {gameWord?.sub}</small>}</div>
                 )}
               </div>
             )}
@@ -368,6 +368,7 @@ function GamePhase({ screen, setScreen, mode, players, setPlayers, playerId, rev
     return (
       <div className="card" style={{ height: '80vh', display: 'flex', flexDirection: 'column' }}>
         <h3>💬 Debate {mode === 'ONLINE' ? `Ronda ${turnInfo.round}` : ''}</h3>
+        {settings.useTimer && <DebateTimer />}
         <div style={{ flex: 1, overflowY: 'auto', background: '#f0f0f0', padding: '10px', borderRadius: '10px', marginBottom: '10px' }}>
           {mode === 'LOCAL' ? (
             <div style={{textAlign:'center', padding:'20px'}}><p>¡A debatir en voz alta!<br/>Arranca: <strong>{turnInfo?.starter}</strong></p></div>
@@ -468,6 +469,22 @@ function GamePhase({ screen, setScreen, mode, players, setPlayers, playerId, rev
       <p>La palabra de la mayoría era: <strong>{gameWord?.name}</strong></p>
       {settings.playMode === 'BLIND' && <p>La palabra del impostor era: <strong>{impostorWord?.name}</strong></p>}
       {isHost && <button className="btn btn-primary" style={{marginTop:'20px'}} onClick={async () => { if (mode === 'LOCAL') setScreen('LOBBY'); else await supabase.from('rooms').update({ game_state: 'LOBBY', turn_info: { chat: [], customWords: [], votes: {}, eliminated: [], round: 1, winner: null, turn_order: [], current_turn_idx: 0 } }).eq('code', roomCode); }}>OTRA PARTIDA</button>}
+    </div>
+  );
+}
+
+function DebateTimer() {
+  const [timeLeft, setTimeLeft] = useState(180); // 3 minutos
+  useEffect(() => {
+    if (timeLeft <= 0) return;
+    const t = setInterval(() => setTimeLeft(prev => prev - 1), 1000);
+    return () => clearInterval(t);
+  }, [timeLeft]);
+  const mins = Math.floor(timeLeft / 60);
+  const secs = timeLeft % 60;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px', fontSize: '1.5rem', fontWeight: 'bold', color: timeLeft <= 30 ? '#E74C3C' : 'var(--oscuro)', marginBottom: '10px', background: '#f9f9f9', padding: '10px', borderRadius: '10px' }}>
+      <Clock size={24} /> {mins}:{secs < 10 ? '0' : ''}{secs}
     </div>
   );
 }
