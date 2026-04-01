@@ -31,6 +31,26 @@ export default function App() {
   // --- SINCRONIZACIÓN ---
   useEffect(() => {
     if (mode !== 'ONLINE' || !roomCode) return;
+
+    const fetchInitialData = async () => {
+      try {
+        const { data: roomData } = await supabase.from('rooms').select('*').eq('code', roomCode).single();
+        if (roomData) {
+          if (roomData.game_state) setScreen(roomData.game_state);
+          if (roomData.game_word) setGameWord(roomData.game_word);
+          if (roomData.impostor_word) setImpostorWord(roomData.impostor_word);
+          if (roomData.settings) setSettings(roomData.settings);
+          if (roomData.turn_info) setTurnInfo(roomData.turn_info);
+        }
+        const { data: playersData } = await supabase.from('players').select('*').eq('room_code', roomCode).order('created_at');
+        if (playersData) setPlayers(playersData);
+      } catch (err) {
+        console.error("Error cargando sala:", err);
+      }
+    };
+
+    fetchInitialData();
+
     const roomSub = supabase.channel(`room-${roomCode}`).on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `code=eq.${roomCode}` }, (payload) => {
       const data = payload.new;
       if (data.game_state) setScreen(data.game_state);
@@ -39,10 +59,12 @@ export default function App() {
       if (data.settings) setSettings(data.settings);
       if (data.turn_info) setTurnInfo(data.turn_info);
     }).subscribe();
+
     const playersSub = supabase.channel(`players-${roomCode}`).on('postgres_changes', { event: '*', schema: 'public', table: 'players', filter: `room_code=eq.${roomCode}` }, async () => {
       const { data } = await supabase.from('players').select('*').eq('room_code', roomCode).order('created_at');
       if (data) setPlayers(data);
     }).subscribe();
+
     return () => { supabase.removeChannel(roomSub); supabase.removeChannel(playersSub); };
   }, [mode, roomCode]);
 
@@ -79,45 +101,102 @@ export default function App() {
     if (!currentPlayerName.trim()) return alert('Poné tu nombre');
     const code = Math.random().toString(36).substr(2, 4).toUpperCase();
     const myId = Math.random().toString(36).substr(2, 9);
-    await supabase.from('rooms').insert([{ code, settings, game_state: 'LOBBY', turn_info: { chat: [], customWords: [], votes: {}, eliminated: [], round: 1, winner: null, turn_order: [], current_turn_idx: 0 } }]);
-    await supabase.from('players').insert([{ id: myId, room_code: code, name: currentPlayerName, is_host: true }]);
-    setRoomCode(code); setPlayerId(myId); setIsHost(true); setMode('ONLINE'); setScreen('LOBBY');
+    try {
+      await supabase.from('rooms').insert([{ code, settings, game_state: 'LOBBY', turn_info: { chat: [], customWords: [], votes: {}, eliminated: [], round: 1, winner: null, turn_order: [], current_turn_idx: 0 } }]);
+      await supabase.from('players').insert([{ id: myId, room_code: code, name: currentPlayerName, is_host: true }]);
+      setRoomCode(code); 
+      setPlayerId(myId); 
+      setIsHost(true); 
+      setMode('ONLINE'); 
+      setScreen('LOBBY');
+      setPlayers([{ id: myId, room_code: code, name: currentPlayerName, is_host: true }]); // Set local player immediately
+    } catch (err) {
+      alert("Error creando sala. Revisá tu conexión.");
+    }
   };
 
   const joinRoom = async (code: string) => {
     if (!currentPlayerName.trim()) return alert('Poné tu nombre');
     const myId = Math.random().toString(36).substr(2, 9);
-    const { error } = await supabase.from('players').insert([{ id: myId, room_code: code.toUpperCase(), name: currentPlayerName }]);
-    if (error) return alert('No existe la sala');
-    setRoomCode(code.toUpperCase()); setPlayerId(myId); setIsHost(false); setMode('ONLINE'); setScreen('LOBBY');
+    const cleanCode = code.trim().toUpperCase();
+    const { error } = await supabase.from('players').insert([{ id: myId, room_code: cleanCode, name: currentPlayerName }]);
+    if (error) return alert('No existe la sala o error al entrar');
+    setRoomCode(cleanCode); setPlayerId(myId); setIsHost(false); setMode('ONLINE'); setScreen('LOBBY');
   };
 
   const startGame = async () => {
     if (players.length < 3) return alert('Mínimo 3 jugadores');
     
-    let mainWord, impWord;
-    if (settings.playMode === 'BLIND') {
-      const pair = getPairOfWords(selectedCategory.items, selectedCategory.id);
-      mainWord = pair.main; impWord = pair.imp;
-    } else {
-      mainWord = getRandomWord(selectedCategory.items, selectedCategory.id);
-      impWord = null;
-    }
+    try {
+      let mainWord, impWord;
+      if (settings.playMode === 'BLIND') {
+        const pair = getPairOfWords(selectedCategory.items, selectedCategory.id);
+        mainWord = pair.main; impWord = pair.imp;
+      } else {
+        mainWord = getRandomWord(selectedCategory.items, selectedCategory.id);
+        impWord = null;
+      }
 
-    const shuffledPlayers = shuffleArray([...players]);
-    const imps = shuffledPlayers.slice(0, impostorCount).map(p => p.id);
-    const turnOrder = shuffleArray([...players]).map(p => p.id);
+      const shuffledPlayers = shuffleArray([...players]);
+      const imps = shuffledPlayers.slice(0, impostorCount).map(p => p.id);
+      const turnOrder = shuffleArray([...players]).map(p => p.id);
 
-    if (mode === 'LOCAL') {
-      if (selectedCategory.isCustom) { setScreen('INPUT_CUSTOM'); setRevealedIdx(0); return; }
-      setGameWord(mainWord); setImpostorWord(impWord);
-      setPlayers(players.map(p => ({ ...p, is_impostor: imps.includes(p.id), clue: '', custom_names: [] })));
-      setTurnInfo({ starter: players.find(p=>p.id===turnOrder[0])?.name, direction: Math.random()>0.5?'Derecha':'Izquierda', chat: [], votes: {}, eliminated: [], round: 1, winner: null, turn_order: turnOrder, current_turn_idx: 0 });
-      setRevealedIdx(0); setScreen('REVEAL');
-    } else {
-      if (selectedCategory.isCustom) { await supabase.from('rooms').update({ game_state: 'INPUT_CUSTOM', turn_info: { eliminated: [], round: 1, chat: [], votes: {}, winner: null, turn_order: turnOrder, current_turn_idx: 0, customWords: [] } }).eq('code', roomCode); return; }
-      for (const p of players) await supabase.from('players').update({ is_ready: false, is_impostor: imps.includes(p.id), clue: '', custom_names: [] }).eq('id', p.id);
-      await supabase.from('rooms').update({ game_state: 'REVEAL', game_word: mainWord, impostor_word: impWord, turn_info: { starter: players.find(p=>p.id===turnOrder[0])?.name, direction: Math.random()>0.5?'Derecha':'Izquierda', chat: [], votes: {}, eliminated: [], round: 1, winner: null, turn_order: turnOrder, current_turn_idx: 0 }, settings }).eq('code', roomCode);
+      if (mode === 'LOCAL') {
+        if (selectedCategory.isCustom) { setScreen('INPUT_CUSTOM'); setRevealedIdx(0); return; }
+        setGameWord(mainWord); setImpostorWord(impWord);
+        setPlayers(players.map(p => ({ ...p, is_impostor: imps.includes(p.id), clue: '', custom_names: [] })));
+        setTurnInfo({ starter: players.find(p=>p.id===turnOrder[0])?.name, direction: Math.random()>0.5?'Derecha':'Izquierda', chat: [], votes: {}, eliminated: [], round: 1, winner: null, turn_order: turnOrder, current_turn_idx: 0 });
+        setRevealedIdx(0); setScreen('REVEAL');
+      } else {
+        if (selectedCategory.isCustom) { 
+          await supabase.from('rooms').update({ 
+            game_state: 'INPUT_CUSTOM', 
+            turn_info: { eliminated: [], round: 1, chat: [], votes: {}, winner: null, turn_order: turnOrder, current_turn_idx: 0, customWords: [] } 
+          }).eq('code', roomCode); 
+          setScreen('INPUT_CUSTOM');
+          return; 
+        }
+        
+        // 1. Actualizar jugadores (quién es impostor, resetear pistas)
+        // Lo hacemos en paralelo para que sea más rápido
+        await Promise.all(players.map(p => 
+          supabase.from('players').update({ 
+            is_ready: false, 
+            is_impostor: imps.includes(p.id), 
+            clue: '', 
+            custom_names: [] 
+          }).eq('id', p.id)
+        ));
+        
+        // 2. Actualizar el estado de la sala
+        const { error } = await supabase.from('rooms').update({ 
+          game_state: 'REVEAL', 
+          game_word: mainWord, 
+          impostor_word: impWord, 
+          turn_info: { 
+            starter: players.find(p=>p.id===turnOrder[0])?.name, 
+            direction: Math.random()>0.5?'Derecha':'Izquierda', 
+            chat: [], 
+            votes: {}, 
+            eliminated: [], 
+            round: 1, 
+            winner: null, 
+            turn_order: turnOrder, 
+            current_turn_idx: 0 
+          }, 
+          settings 
+        }).eq('code', roomCode);
+
+        if (error) throw error;
+
+        // 3. CAMBIO CLAVE: El Host cambia de pantalla localmente YA MISMO
+        setGameWord(mainWord);
+        setImpostorWord(impWord);
+        setScreen('REVEAL');
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Hubo un error al iniciar el juego. Intentá de nuevo.");
     }
   };
 
