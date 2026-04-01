@@ -149,27 +149,28 @@ export default function App() {
         setRevealedIdx(0); setScreen('REVEAL');
       } else {
         if (selectedCategory.isCustom) { 
-          await supabase.from('rooms').update({ 
+          const { error: customError } = await supabase.from('rooms').update({ 
             game_state: 'INPUT_CUSTOM', 
             turn_info: { eliminated: [], round: 1, chat: [], votes: {}, winner: null, turn_order: turnOrder, current_turn_idx: 0, customWords: [] } 
           }).eq('code', roomCode); 
+          if (customError) throw new Error("Error al crear sala custom: " + customError.message);
           setScreen('INPUT_CUSTOM');
           return; 
         }
         
         // 1. Actualizar jugadores (quién es impostor, resetear pistas)
-        // Lo hacemos en paralelo para que sea más rápido
-        await Promise.all(players.map(p => 
-          supabase.from('players').update({ 
-            is_ready: false, 
+        // Lo hacemos uno por uno pero atrapando errores individuales
+        for (const p of players) {
+          const { error: pError } = await supabase.from('players').update({ 
             is_impostor: imps.includes(p.id), 
             clue: '', 
             custom_names: [] 
-          }).eq('id', p.id)
-        ));
+          }).eq('id', p.id);
+          if (pError) console.error(`Error actualizando jugador ${p.name}:`, pError.message);
+        }
         
         // 2. Actualizar el estado de la sala
-        const { error } = await supabase.from('rooms').update({ 
+        const { error: roomError } = await supabase.from('rooms').update({ 
           game_state: 'REVEAL', 
           game_word: mainWord, 
           impostor_word: impWord, 
@@ -187,16 +188,16 @@ export default function App() {
           settings 
         }).eq('code', roomCode);
 
-        if (error) throw error;
+        if (roomError) throw new Error("Error al actualizar sala: " + roomError.message);
 
-        // 3. CAMBIO CLAVE: El Host cambia de pantalla localmente YA MISMO
+        // 3. El Host cambia de pantalla localmente
         setGameWord(mainWord);
         setImpostorWord(impWord);
         setScreen('REVEAL');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert("Hubo un error al iniciar el juego. Intentá de nuevo.");
+      alert("Error: " + (err.message || "Problema de conexión"));
     }
   };
 
