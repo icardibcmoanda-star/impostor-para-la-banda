@@ -38,7 +38,7 @@ export default function App() {
         if (roomData) {
           if (roomData.game_state) setScreen(roomData.game_state);
           if (roomData.game_word) setGameWord(roomData.game_word);
-          if (roomData.impostor_word) setImpostorWord(roomData.impostor_word);
+          if (roomData.turn_info?.impostor_word) setImpostorWord(roomData.turn_info.impostor_word);
           if (roomData.settings) setSettings(roomData.settings);
           if (roomData.turn_info) setTurnInfo(roomData.turn_info);
         }
@@ -433,7 +433,24 @@ function GamePhase({ screen, setScreen, mode, players, setPlayers, playerId, rev
             const word = getRandomWord(selectedCategory.items, selectedCategory.id);
             const newTurnOrder = shuffleArray(players.filter(p => !newEliminated.includes(p.id)).map(p => p.id));
             if (mode === 'LOCAL') { setPlayers(players.map(p => ({...p, clue: ''}))); setTurnInfo({...turnInfo, eliminated: newEliminated, votes: {}, round: turnInfo.round + 1, turn_order: newTurnOrder, starter: players.find(p=>p.id===newTurnOrder[0])?.name }); setRevealedIdx(0); setScreen('REVEAL'); }
-            else { await supabase.from('players').update({ clue: '' }).eq('room_code', roomCode); await supabase.from('rooms').update({ game_state: 'REVEAL', game_word: word, turn_info: {...turnInfo, eliminated: newEliminated, votes: {}, round: turnInfo.round + 1, chat: [], turn_order: newTurnOrder, starter: players.find(p=>p.id===newTurnOrder[0])?.name } }).eq('code', roomCode); }
+            else { 
+              const pair = settings.playMode === 'BLIND' ? getPairOfWords(selectedCategory.items, selectedCategory.id) : { main: word, imp: null };
+              await supabase.from('players').update({ clue: '' }).eq('room_code', roomCode); 
+              await supabase.from('rooms').update({ 
+                game_state: 'REVEAL', 
+                game_word: pair.main, 
+                turn_info: { 
+                  ...turnInfo, 
+                  impostor_word: pair.imp,
+                  eliminated: newEliminated, 
+                  votes: {}, 
+                  round: turnInfo.round + 1, 
+                  chat: [], 
+                  turn_order: newTurnOrder, 
+                  starter: players.find(p=>p.id===newTurnOrder[0])?.name 
+                } 
+              }).eq('code', roomCode); 
+            }
           }
         }}>CONTINUAR</button>}
       </div>
