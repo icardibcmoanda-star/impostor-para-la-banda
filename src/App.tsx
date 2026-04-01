@@ -345,9 +345,9 @@ function GamePhase({ screen, setScreen, mode, players, setPlayers, playerId, rev
               {!showSecret ? 'TAP PARA VER' : (
                 <div>
                   {settings.playMode === 'BLIND' ? (
-                    <div style={{ color: 'var(--accent)' }}><Info size={32}/><br/>TU PALABRA ES:<br/><strong>{me.is_impostor ? impostorWord?.name : gameWord?.name}</strong></div>
+                    <div style={{ color: 'var(--accent)' }}><Info size={32}/><br/>TU PALABRA ES:<br/><strong>{me.is_impostor ? impostorWord?.name : gameWord?.name}</strong><br/>{settings.revealSubCategory && <small style={{color: '#666'}}><br/>Categoría: {me.is_impostor ? impostorWord?.sub : gameWord?.sub}</small>}</div>
                   ) : (
-                    me.is_impostor ? <div style={{ color: '#E74C3C' }}><Ghost size={32}/><br/>SOS EL IMPOSTOR<br/><small>Pista: {gameWord?.clue}</small></div> : <div style={{ color: 'var(--accent)' }}><Info size={32}/><br/>PALABRA: {gameWord?.name}</div>
+                    me.is_impostor ? <div style={{ color: '#E74C3C' }}><Ghost size={32}/><br/>SOS EL IMPOSTOR<br/>{settings.giveImpostorClue && <small>Pista: {gameWord?.clue}</small>}{settings.impostorsKnowEachOther && impostorCount > 1 && <div style={{marginTop: '10px', fontSize: '0.8rem', borderTop: '1px solid #ff9999', paddingTop: '5px'}}>Otros impostores: {players.filter((p: any) => p.is_impostor && p.id !== me.id).map((p: any) => p.name).join(', ') || 'Nadie'}</div>}</div> : <div style={{ color: 'var(--accent)' }}><Info size={32}/><br/>PALABRA: {gameWord?.name}<br/>{settings.revealSubCategory && <small style={{color: '#666'}}><br/>Categoría: {gameWord?.sub}</small>}</div>
                   )}
                 </div>
               )}
@@ -464,6 +464,10 @@ function GamePhase({ screen, setScreen, mode, players, setPlayers, playerId, rev
       <p>La palabra de la mayoría era: <strong>{gameWord?.name}</strong></p>
       {settings.playMode === 'BLIND' && <p>La palabra del impostor era: <strong>{impostorWord?.name}</strong></p>}
       {isHost && <button className="btn btn-primary" style={{marginTop:'20px'}} onClick={async () => { if (mode === 'LOCAL') setScreen('LOBBY'); else await supabase.from('rooms').update({ game_state: 'LOBBY', turn_info: { chat: [], customWords: [], votes: {}, eliminated: [], round: 1, winner: null, turn_order: [], current_turn_idx: 0 } }).eq('code', roomCode); }}>OTRA PARTIDA</button>}
+    </div>
+  );
+}
+de); }}>OTRA PARTIDA</button>}
     </div>
   );
 }
