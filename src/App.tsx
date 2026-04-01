@@ -55,7 +55,7 @@ export default function App() {
       const data = payload.new;
       if (data.game_state) setScreen(data.game_state);
       if (data.game_word) setGameWord(data.game_word);
-      if (data.impostor_word) setImpostorWord(data.impostor_word);
+      if (data.turn_info?.impostor_word) setImpostorWord(data.turn_info.impostor_word);
       if (data.settings) setSettings(data.settings);
       if (data.turn_info) setTurnInfo(data.turn_info);
     }).subscribe();
