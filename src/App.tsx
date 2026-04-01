@@ -173,8 +173,8 @@ export default function App() {
         const { error: roomError } = await supabase.from('rooms').update({ 
           game_state: 'REVEAL', 
           game_word: mainWord, 
-          impostor_word: impWord, 
           turn_info: { 
+            impostor_word: impWord,
             starter: players.find(p=>p.id===turnOrder[0])?.name, 
             direction: Math.random()>0.5?'Derecha':'Izquierda', 
             chat: [], 
