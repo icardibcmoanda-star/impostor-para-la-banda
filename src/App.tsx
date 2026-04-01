@@ -471,7 +471,3 @@ function GamePhase({ screen, setScreen, mode, players, setPlayers, playerId, rev
     </div>
   );
 }
-de); }}>OTRA PARTIDA</button>}
-    </div>
-  );
-}
