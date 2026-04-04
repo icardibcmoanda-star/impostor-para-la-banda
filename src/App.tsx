@@ -264,7 +264,7 @@ export default function App() {
         )}
 
         {(screen !== 'START' && screen !== 'LOBBY') && (
-          <GamePhase screen={screen} setScreen={setScreen} mode={mode} players={players} setPlayers={setPlayers} playerId={playerId} revealedIdx={revealedIdx} setRevealedIdx={setRevealedIdx} gameWord={gameWord} setGameWord={setGameWord} impostorWord={impostorWord} setImpostorWord={setImpostorWord} settings={settings} roomCode={roomCode} isHost={isHost} turnInfo={turnInfo} setTurnInfo={setTurnInfo} getRandomWord={getRandomWord} impostorCount={impostorCount} selectedCategory={selectedCategory} shuffleArray={shuffleArray} />
+          <GamePhase screen={screen} setScreen={setScreen} mode={mode} players={players} setPlayers={setPlayers} playerId={playerId} revealedIdx={revealedIdx} setRevealedIdx={setRevealedIdx} gameWord={gameWord} setGameWord={setGameWord} impostorWord={impostorWord} setImpostorWord={setImpostorWord} settings={settings} roomCode={roomCode} isHost={isHost} turnInfo={turnInfo} setTurnInfo={setTurnInfo} getRandomWord={getRandomWord} impostorCount={impostorCount} selectedCategory={selectedCategory} shuffleArray={shuffleArray} startGame={startGame} />
         )}
       </AnimatePresence>
     </div>
@@ -468,7 +468,12 @@ function GamePhase({ screen, setScreen, mode, players, setPlayers, playerId, rev
       <h2>{turnInfo.winner === 'INNOCENTS' ? '¡GANARON LOS INOCENTES! 😇' : '¡GANARON LOS IMPOSTORES! 😈'}</h2>
       <p>La palabra de la mayoría era: <strong>{gameWord?.name}</strong></p>
       {settings.playMode === 'BLIND' && <p>La palabra del impostor era: <strong>{impostorWord?.name}</strong></p>}
-      {isHost && <button className="btn btn-primary" style={{marginTop:'20px'}} onClick={async () => { if (mode === 'LOCAL') setScreen('LOBBY'); else await supabase.from('rooms').update({ game_state: 'LOBBY', turn_info: { chat: [], customWords: [], votes: {}, eliminated: [], round: 1, winner: null, turn_order: [], current_turn_idx: 0 } }).eq('code', roomCode); }}>OTRA PARTIDA</button>}
+      {isHost && (
+        <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+          <button className="btn btn-secondary" style={{flex: 1, marginBottom: 0}} onClick={async () => { if (mode === 'LOCAL') setScreen('LOBBY'); else await supabase.from('rooms').update({ game_state: 'LOBBY', turn_info: { chat: [], customWords: [], votes: {}, eliminated: [], round: 1, winner: null, turn_order: [], current_turn_idx: 0 } }).eq('code', roomCode); }}>LOBBY</button>
+          <button className="btn btn-primary" style={{flex: 2, marginBottom: 0}} onClick={startGame}>REVANCHA RÁPIDA</button>
+        </div>
+      )}
     </div>
   );
 }
