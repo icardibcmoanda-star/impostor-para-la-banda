@@ -128,6 +128,27 @@ export default function App() {
     if (players.length < 3) return alert('Mínimo 3 jugadores');
     
     try {
+      const turnOrder = shuffleArray([...players]).map(p => p.id);
+
+      // Si es categoría personalizada (Amigos), mandarlos a escribir nombres ANTES de sacar la palabra
+      if (selectedCategory.isCustom) { 
+        if (mode === 'LOCAL') {
+          // Guardar el turnOrder localmente también por las dudas
+          setTurnInfo(prev => ({...prev, turn_order: turnOrder}));
+          setScreen('INPUT_CUSTOM'); 
+          setRevealedIdx(0); 
+          return; 
+        } else {
+          const { error: customError } = await supabase.from('rooms').update({ 
+            game_state: 'INPUT_CUSTOM', 
+            turn_info: { eliminated: [], round: 1, chat: [], votes: {}, winner: null, turn_order: turnOrder, current_turn_idx: 0, customWords: [] } 
+          }).eq('code', roomCode); 
+          if (customError) throw new Error("Error al crear sala custom: " + customError.message);
+          setScreen('INPUT_CUSTOM');
+          return; 
+        }
+      }
+
       let mainWord, impWord;
       if (settings.playMode === 'BLIND') {
         const pair = getPairOfWords(selectedCategory.items, selectedCategory.id);
@@ -139,24 +160,13 @@ export default function App() {
 
       const shuffledPlayers = shuffleArray([...players]);
       const imps = shuffledPlayers.slice(0, impostorCount).map(p => p.id);
-      const turnOrder = shuffleArray([...players]).map(p => p.id);
 
       if (mode === 'LOCAL') {
-        if (selectedCategory.isCustom) { setScreen('INPUT_CUSTOM'); setRevealedIdx(0); return; }
         setGameWord(mainWord); setImpostorWord(impWord);
         setPlayers(players.map(p => ({ ...p, is_impostor: imps.includes(p.id), clue: '', custom_names: [] })));
         setTurnInfo({ starter: players.find(p=>p.id===turnOrder[0])?.name, direction: Math.random()>0.5?'Derecha':'Izquierda', chat: [], votes: {}, eliminated: [], round: 1, winner: null, turn_order: turnOrder, current_turn_idx: 0 });
         setRevealedIdx(0); setScreen('REVEAL');
       } else {
-        if (selectedCategory.isCustom) { 
-          const { error: customError } = await supabase.from('rooms').update({ 
-            game_state: 'INPUT_CUSTOM', 
-            turn_info: { eliminated: [], round: 1, chat: [], votes: {}, winner: null, turn_order: turnOrder, current_turn_idx: 0, customWords: [] } 
-          }).eq('code', roomCode); 
-          if (customError) throw new Error("Error al crear sala custom: " + customError.message);
-          setScreen('INPUT_CUSTOM');
-          return; 
-        }
         
         // 1. Actualizar jugadores (quién es impostor, resetear pistas)
         // Lo hacemos uno por uno pero atrapando errores individuales
