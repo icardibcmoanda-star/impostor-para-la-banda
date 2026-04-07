@@ -311,6 +311,73 @@ function GamePhase({ screen, setScreen, mode, players, setPlayers, playerId, rev
     setClueInput(''); setShowSecret(false);
   };
 
+  if (screen === 'INPUT_CUSTOM') {
+    return (
+      <div className="card">
+        <h3>Escriban nombres (Amigos/Conocidos)</h3>
+        {mode === 'LOCAL' ? (
+          <div>
+            <p style={{fontSize: '0.8rem', color: '#666'}}>Ingresen al menos 5 nombres de conocidos separados por un salto de línea.</p>
+            <textarea className="input" rows={6} placeholder="Juan&#10;Pedro&#10;Maria&#10;Lucas&#10;Sofi" onChange={(e) => setTurnInfo({...turnInfo, customWords: e.target.value.split('\n').filter((x:string) => x.trim())})}></textarea>
+            <button className="btn btn-primary" onClick={() => {
+              const words = turnInfo.customWords || [];
+              if (words.length < 5) return alert('Mínimo 5 nombres por favor');
+              const customItems = words.map((w: string) => ({ name: w, sub: 'Amigo', clue: 'Alguien conocido' }));
+              const mainWord = getRandomWord(customItems, 'custom');
+              const impWord = settings.playMode === 'BLIND' ? getRandomWord(customItems, 'custom') : null;
+              const imps = shuffleArray([...players]).slice(0, impostorCount).map((p:any) => p.id);
+              setGameWord(mainWord); setImpostorWord(impWord);
+              setPlayers(players.map((p:any) => ({ ...p, is_impostor: imps.includes(p.id), clue: '' })));
+              setTurnInfo({...turnInfo, starter: players.find((p:any)=>p.id===turnOrder[0])?.name, direction: Math.random()>0.5?'Derecha':'Izquierda'});
+              setRevealedIdx(0); setScreen('REVEAL');
+            }}>EMPEZAR A JUGAR</button>
+          </div>
+        ) : (
+          <div>
+            {turnInfo.customWords?.some((cw: any) => cw.playerId === playerId) ? (
+              <div style={{padding: '20px', textAlign: 'center'}}>
+                <Clock size={32} style={{color: '#666', marginBottom: '10px'}} />
+                <p>Esperando a que los demás carguen sus nombres...</p>
+                <p style={{fontSize: '0.8rem', marginTop: '10px', fontWeight: 'bold'}}>Nombres cargados: {turnInfo.customWords?.length || 0} / {players.length * 3}</p>
+              </div>
+            ) : (
+              <>
+                <p style={{fontSize: '0.8rem', color: '#666'}}>Escribí 3 nombres de conocidos de la banda para meter en el sorteo.</p>
+                <input className="input" value={customNames[0]} onChange={(e) => setCustomNames([e.target.value, customNames[1], customNames[2]])} placeholder="Nombre 1" />
+                <input className="input" value={customNames[1]} onChange={(e) => setCustomNames([customNames[0], e.target.value, customNames[2]])} placeholder="Nombre 2" />
+                <input className="input" value={customNames[2]} onChange={(e) => setCustomNames([customNames[0], customNames[1], e.target.value])} placeholder="Nombre 3" />
+                <button className="btn btn-primary" onClick={async () => {
+                  if (customNames.some(n => !n.trim())) return alert('Por favor completá los 3 nombres');
+                  const myWords = customNames.map(n => ({ word: n, playerId }));
+                  const newWords = [...(turnInfo.customWords || []), ...myWords];
+                  await supabase.from('rooms').update({ turn_info: { ...turnInfo, customWords: newWords } }).eq('code', roomCode);
+                }}>ENVIAR MIS NOMBRES</button>
+              </>
+            )}
+            {isHost && (turnInfo.customWords?.length || 0) >= players.length * 3 && (
+               <button className="btn btn-accent" style={{marginTop: '20px'}} onClick={async () => {
+                  const words = turnInfo.customWords.map((cw: any) => cw.word);
+                  const customItems = words.map((w: string) => ({ name: w, sub: 'Amigo', clue: 'Alguien conocido' }));
+                  const mainWord = getRandomWord(customItems, 'custom');
+                  const impWord = settings.playMode === 'BLIND' ? getRandomWord(customItems, 'custom') : null;
+                  
+                  const imps = shuffleArray([...players]).slice(0, impostorCount).map((p:any) => p.id);
+                  for (const p of players) {
+                    await supabase.from('players').update({ is_impostor: imps.includes(p.id), clue: '' }).eq('id', p.id);
+                  }
+                  await supabase.from('rooms').update({ 
+                    game_state: 'REVEAL', 
+                    game_word: mainWord, 
+                    turn_info: { ...turnInfo, impostor_word: impWord, starter: players.find((p:any)=>p.id===turnOrder[0])?.name, direction: Math.random()>0.5?'Derecha':'Izquierda' } 
+                  }).eq('code', roomCode);
+               }}>¡TODOS CARGADOS, EMPEZAR!</button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   if (screen === 'REVEAL') {
     if (mode === 'LOCAL') {
       return (
